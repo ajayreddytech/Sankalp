@@ -1,0 +1,10 @@
+{
+  "name": "sankalp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SANKALP habit and sankalpa tracker (PWA on Firebase)",
+  "scripts": {
+    "test": "node --test tests/logic.test.js"
+  }
+}

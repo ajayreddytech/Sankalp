@@ -1,0 +1,792 @@
+// SANKALP UI: routing, rendering and interactions.
+import * as db from './db.js';
+import * as L from './logic.js';
+
+const ICONS = [
+  'target', 'dumbbell', 'book-open', 'droplet', 'moon', 'sun', 'brain', 'heart', 'pen-line', 'leaf',
+  'flame', 'footprints', 'coffee', 'apple', 'bed', 'music', 'code', 'mountain', 'sparkles', 'zap',
+  'star', 'wallet', 'languages', 'piggy-bank',
+];
+const COLORS = ['#8b5cf6', '#22d3ee', '#34d399', '#fbbf24', '#fb7185', '#38bdf8'];
+
+const state = {
+  authReady: false,
+  user: null,
+  goals: [],
+  goalsReady: false,
+  accTab: 'accomplished',
+  lastRouteKey: null,
+};
+let unsubscribeGoals = null;
+
+const $ = (sel) => document.querySelector(sel);
+const view = () => $('#view');
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+const icon = (name, cls = '') => `<i data-lucide="${esc(name)}" class="${cls}" aria-hidden="true"></i>`;
+const refreshIcons = () => window.lucide?.createIcons();
+
+function fmtDate(s) {
+  if (!s) return '';
+  const d = new Date(`${s}T12:00:00`);
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function route() {
+  const [name = 'home', id = ''] = location.hash.replace(/^#\/?/, '').split('/');
+  return { name: name || 'home', id: decodeURIComponent(id) };
+}
+
+// ---------- toast & modal helpers ----------
+
+function toast(msg, kind = 'info') {
+  const t = document.createElement('div');
+  t.className = `toast ${kind}`;
+  t.textContent = msg;
+  $('#toast-root').appendChild(t);
+  setTimeout(() => t.classList.add('out'), 3200);
+  setTimeout(() => t.remove(), 3700);
+}
+
+function openModal({ title, body, footer = '', wide = false, onMount, onClose }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `
+    <section class="sheet ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+      <header class="sheet-head">
+        <h2>${esc(title)}</h2>
+        <button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>
+      </header>
+      <div class="sheet-body">${body}</div>
+      ${footer ? `<footer class="sheet-foot">${footer}</footer>` : ''}
+    </section>`;
+  $('#modal-root').appendChild(wrap);
+  refreshIcons();
+
+  let closed = false;
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  function close() {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKey);
+    wrap.classList.add('leaving');
+    setTimeout(() => wrap.remove(), 200);
+    onClose?.();
+  }
+  document.addEventListener('keydown', onKey);
+  wrap.addEventListener('click', (e) => {
+    if (e.target === wrap || e.target.closest('[data-close]')) close();
+  });
+  onMount?.(wrap, close);
+  return { wrap, close };
+}
+
+function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = false }) {
+  return new Promise((resolve) => {
+    let answered = false;
+    openModal({
+      title,
+      body: `<p class="muted">${message}</p>`,
+      footer: `<button class="btn ghost" data-close>Cancel</button>
+               <button class="btn ${danger ? 'danger' : 'primary'}" data-ok>${esc(confirmLabel)}</button>`,
+      onMount: (w, close) => {
+        w.querySelector('[data-ok]').addEventListener('click', () => {
+          answered = true;
+          resolve(true);
+          close();
+        });
+      },
+      onClose: () => { if (!answered) resolve(false); },
+    });
+  });
+}
+
+function celebrate(title) {
+  const el = document.createElement('div');
+  el.className = 'celebrate';
+  const colors = ['#34d399', '#8b5cf6', '#22d3ee', '#fbbf24', '#fb7185'];
+  let confetti = '';
+  for (let i = 0; i < 70; i++) {
+    confetti += `<span style="left:${Math.random() * 100}%;animation-delay:${Math.random() * 0.8}s;
+      background:${colors[i % colors.length]};transform:rotate(${Math.random() * 360}deg)"></span>`;
+  }
+  el.innerHTML = `
+    <div class="confetti">${confetti}</div>
+    <div class="celebrate-card">
+      <div class="trophy-orb">${icon('trophy')}</div>
+      <p class="eyebrow">Accomplished</p>
+      <h2>${esc(title)}</h2>
+      <p class="muted">Every day of it is in your record now.</p>
+      <button class="btn primary" data-go>View accomplishments</button>
+    </div>`;
+  document.body.appendChild(el);
+  refreshIcons();
+  const dismiss = () => {
+    el.classList.add('leaving');
+    setTimeout(() => el.remove(), 300);
+  };
+  el.querySelector('[data-go]').addEventListener('click', () => {
+    dismiss();
+    location.hash = '#/accomplishments';
+  });
+  setTimeout(dismiss, 6000);
+}
+
+// ---------- shared pickers ----------
+
+function iconPicker(selected) {
+  return `<div class="picker-grid">${ICONS.map((name) => `
+    <label class="pick" title="${esc(name)}">
+      <input type="radio" name="icon" value="${esc(name)}" ${name === selected ? 'checked' : ''}>
+      <span>${icon(name)}</span>
+    </label>`).join('')}</div>`;
+}
+
+function colorPicker(selected) {
+  return `<div class="swatches">${COLORS.map((c) => `
+    <label class="swatch" style="--c:${c}">
+      <input type="radio" name="color" value="${c}" ${c === selected ? 'checked' : ''}>
+      <span></span>
+    </label>`).join('')}</div>`;
+}
+
+// ---------- rail (floating left sidebar) ----------
+
+function renderRail() {
+  const r = route();
+  const active = state.goals.filter((g) => g.status === 'active');
+  const cls = (name, id) => (r.name === name && (!id || r.id === id) ? 'rail-item active' : 'rail-item');
+  const goalItems = active.map((g) => `
+    <a class="${cls('goal', g.id)} goal-item" href="#/goal/${encodeURIComponent(g.id)}"
+       data-tip="${esc(g.title)}" style="--c:${g.color}" aria-label="${esc(g.title)}">
+      ${icon(g.icon)}
+    </a>`).join('');
+  $('#rail').innerHTML = `
+    <div class="rail-logo" data-tip="SANKALP">${icon('sparkles')}</div>
+    <a class="${cls('home')}" href="#/home" data-tip="Home" aria-label="Home">${icon('house')}</a>
+    <div class="rail-goals">${goalItems}</div>
+    <div class="rail-spacer"></div>
+    <a class="${cls('accomplishments')}" href="#/accomplishments" data-tip="Accomplishments" aria-label="Accomplishments">${icon('trophy')}</a>
+    <button class="rail-item" data-action="account" data-tip="Account" aria-label="Account">${icon('user')}</button>`;
+}
+
+// ---------- views ----------
+
+function viewLogin(error = '') {
+  return `
+    <section class="login page-in">
+      <div class="login-card">
+        <div class="brand-mark">${icon('sparkles')}</div>
+        <h1>SANKALP</h1>
+        <p class="tagline">Build habits. Keep your sankalpas. Walk the journey one day at a time.</p>
+        <button class="btn google" data-action="login">
+          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+          Continue with Google
+        </button>
+        ${error ? `<p class="error">${esc(error)}</p>` : ''}
+        <p class="fine">Your journeys are stored in your own Firestore account.</p>
+      </div>
+    </section>`;
+}
+
+function viewSetup() {
+  return `
+    <section class="login page-in">
+      <div class="login-card">
+        <div class="brand-mark">${icon('settings')}</div>
+        <h1>Almost there</h1>
+        <p class="tagline">Add your Firebase web config to <code>js/config.js</code>, then reload.</p>
+      </div>
+    </section>`;
+}
+
+function goalCard(g, today) {
+  const j = L.journey(g, today);
+  const pct = Math.min(100, Math.round((j.done / g.targetDays) * 100));
+  const nxt = L.nextActionText(g, today);
+  return `
+    <a class="goal-card" href="#/goal/${encodeURIComponent(g.id)}" style="--c:${g.color}">
+      <div class="goal-card-top">
+        <div class="goal-icon">${icon(g.icon)}</div>
+        <div class="goal-meta">
+          <h3>${esc(g.title)}</h3>
+          <p>${g.type === 'habit' ? 'Habit' : 'Sankalpa'} · ${g.targetDays} days${j.exceptions ? ` · ${j.exceptions} exception${j.exceptions > 1 ? 's' : ''}` : ''}</p>
+        </div>
+      </div>
+      <div class="bar"><span style="width:${pct}%"></span></div>
+      <div class="goal-card-foot">
+        <span>${j.done} / ${g.targetDays}</span>
+        <span class="chip ${nxt.kind}">${esc(nxt.text)}</span>
+      </div>
+    </a>`;
+}
+
+function viewHome() {
+  const today = L.todayStr();
+  const active = state.goals.filter((g) => g.status === 'active');
+  const accomplishedCount = L.accomplished(state.goals).length;
+  const dueList = active.filter((g) => {
+    const k = L.nextActionText(g, today).kind;
+    return k === 'today' || k === 'overdue';
+  });
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const name = (state.user.displayName || '').split(' ')[0] || 'there';
+
+  const checkList = dueList.map((g) => {
+    const j = L.journey(g, today);
+    const av = L.exceptionAvailability(g, j.next.date);
+    const label = j.next.date === today ? 'Today' : `Pending · ${fmtDate(j.next.date)}`;
+    return `
+      <div class="due-row" style="--c:${g.color}">
+        <a class="due-title" href="#/goal/${encodeURIComponent(g.id)}">
+          <span class="goal-icon sm">${icon(g.icon)}</span>
+          <span><strong>${esc(g.title)}</strong><small>${esc(label)}</small></span>
+        </a>
+        <div class="due-actions">
+          <button class="btn yes sm" data-action="checkin" data-goal="${g.id}" data-date="${j.next.date}" data-answer="yes">${icon('check')}Done</button>
+          <button class="btn no sm" data-action="checkin" data-goal="${g.id}" data-date="${j.next.date}" data-answer="no" title="${esc(av.ok ? 'Uses an exception' : 'Restarts the journey')}">${icon('x')}Missed</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  const body = active.length === 0 ? `
+    <div class="empty">
+      <div class="empty-orb">${icon('sprout')}</div>
+      <h2>Start your first journey</h2>
+      <p class="muted">Pick a habit to build over 66 days, or a sankalpa with a length of your own.</p>
+      <button class="btn primary" data-action="new">${icon('plus')}New journey</button>
+    </div>` : `
+    <section class="block">
+      <div class="block-head"><h2>Check in</h2><span class="muted">${dueList.length ? `${dueList.length} open` : 'All caught up'}</span></div>
+      ${dueList.length ? `<div class="due-list">${checkList}</div>`
+        : `<div class="all-clear">${icon('circle-check')}<span>Nothing waiting. Next days unlock as you check in.</span></div>`}
+    </section>
+    <section class="block">
+      <div class="block-head"><h2>Your journeys</h2></div>
+      <div class="goal-grid">${active.map((g) => goalCard(g, today)).join('')}</div>
+    </section>`;
+
+  return `
+    <div class="page-in-target">
+      <header class="hero">
+        <p class="eyebrow">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+        <h1>${greet}, ${esc(name)}</h1>
+        <div class="stats">
+          <div class="stat">${icon('flame')}<div><strong>${active.length}</strong><span>Active</span></div></div>
+          <div class="stat">${icon('trophy')}<div><strong>${accomplishedCount}</strong><span>Accomplished</span></div></div>
+        </div>
+      </header>
+      ${body}
+      ${active.length ? `<button class="fab" data-action="new" aria-label="New journey">${icon('plus')}<span>New</span></button>` : ''}
+    </div>`;
+}
+
+function cellHTML(c, g, today, av) {
+  const n = c.index + 1;
+  const style = `--i:${Math.min(c.index, 40)}`;
+  if (c.state === 'done') {
+    return `<div class="cell s-done" style="${style}" title="Day ${n} · ${fmtDate(c.date)}">${icon('check')}</div>`;
+  }
+  if (c.state === 'exception') {
+    return `<div class="cell s-exception" style="${style}" title="Exception · ${fmtDate(c.date)}">${icon('shield')}</div>`;
+  }
+  if (c.state === 'active') {
+    const caption = av.ok
+      ? `Miss = exception (${av.remaining} left)`
+      : (av.reason === 'too_soon' ? `Miss = restart. Exception opens ${fmtDate(av.nextAllowed)}` : 'Miss = restart');
+    return `
+      <div class="cell s-active is-active" style="${style}" tabindex="0" title="Day ${n} · ${fmtDate(c.date)}">
+        <span class="num">${n}</span>
+        <div class="cell-actions" role="group" aria-label="Check in day ${n}">
+          <button class="yes" data-action="checkin" data-goal="${g.id}" data-date="${c.date}" data-answer="yes" aria-label="Done">${icon('check')}</button>
+          <button class="no" data-action="checkin" data-goal="${g.id}" data-date="${c.date}" data-answer="no" aria-label="Missed">${icon('x')}</button>
+          <small>${esc(caption)}</small>
+        </div>
+      </div>`;
+  }
+  return `<div class="cell s-${c.state}" style="${style}" title="Day ${n} · ${fmtDate(c.date)}"><span class="num">${n}</span></div>`;
+}
+
+function viewGoal(id) {
+  const g = state.goals.find((x) => x.id === id);
+  if (!g) {
+    return `<div class="empty"><h2>Journey not found</h2><a class="btn ghost" href="#/home">Back home</a></div>`;
+  }
+  const today = L.todayStr();
+  const j = L.journey(g, today);
+  const pct = Math.min(100, Math.round((j.done / g.targetDays) * 100));
+  const r = 54;
+  const circ = 2 * Math.PI * r;
+  const dayNum = L.dayNumber(g, today);
+  const exLeft = L.MAX_EXCEPTIONS - j.exceptions;
+  const nextExc = L.exceptionAvailability(g, j.next?.date || today);
+
+  let panel;
+  if (g.status === 'completed') {
+    panel = `<section class="panel done-panel">${icon('trophy')}<div><h3>Accomplished on ${fmtDate(g.completedAt?.slice(0, 10))}</h3>
+      <p class="muted">You completed ${g.targetDays} days${j.exceptions ? ` with ${j.exceptions} exception${j.exceptions > 1 ? 's' : ''}` : ''}.</p></div>
+      <a class="btn ghost sm" href="#/accomplishments">View</a></section>`;
+  } else if (g.status === 'abandoned') {
+    panel = `<section class="panel muted-panel">${icon('ban')}<div><h3>Closed</h3><p class="muted">This journey was abandoned and is listed under Not accomplished.</p></div></section>`;
+  } else if (j.next) {
+    const isToday = j.next.date === today;
+    const consequence = nextExc.ok
+      ? `A miss uses one of your ${nextExc.remaining} exception${nextExc.remaining > 1 ? 's' : ''} and adds a day to the journey.`
+      : (nextExc.reason === 'too_soon'
+        ? `You already used an exception recently. A miss now restarts the journey. The next exception opens on ${fmtDate(nextExc.nextAllowed)}.`
+        : 'All exceptions are used. A miss restarts the journey.');
+    panel = `
+      <section class="panel checkin-panel">
+        <div class="checkin-copy">
+          <p class="eyebrow">${isToday ? 'Today' : 'Pending'} · ${fmtDate(j.next.date)}</p>
+          <h3>Did you ${g.type === 'habit' ? 'keep this habit' : 'keep this sankalpa'} on this day?</h3>
+          <p class="muted">${esc(consequence)}</p>
+        </div>
+        <div class="answer-row">
+          <button class="btn yes" data-action="checkin" data-goal="${g.id}" data-date="${j.next.date}" data-answer="yes">${icon('check')}Yes, done</button>
+          <button class="btn no" data-action="checkin" data-goal="${g.id}" data-date="${j.next.date}" data-answer="no">${icon('x')}Missed</button>
+        </div>
+      </section>`;
+  } else {
+    panel = `<section class="panel muted-panel">${icon('circle-check')}<div><h3>Today is checked</h3><p class="muted">The next day unlocks tomorrow.</p></div></section>`;
+  }
+
+  const past = (g.history || []).filter((h) => h.outcome === 'failed' || h.outcome === 'abandoned');
+  const pastHTML = past.length ? `
+    <section class="block">
+      <div class="block-head"><h2>Earlier attempts</h2></div>
+      <div class="attempt-list">${past.slice().reverse().map((h) => `
+        <div class="attempt">
+          <span class="attempt-n">#${h.attempt}</span>
+          <div><strong>${fmtDate(h.startDate)} → ${fmtDate(h.endDate)}</strong>
+          <small>${h.doneCount} of ${h.targetDays} days · ${esc(h.reason)}</small></div>
+        </div>`).join('')}</div>
+    </section>` : '';
+
+  return `
+    <div class="page-in-target">
+      <header class="goal-head" style="--c:${g.color}">
+        <a class="icon-btn back" href="#/home" aria-label="Back">${icon('arrow-left')}</a>
+        <div class="goal-title">
+          <span class="goal-icon lg">${icon(g.icon)}</span>
+          <div>
+            <p class="eyebrow">${g.type === 'habit' ? 'Habit' : 'Sankalpa'} · Attempt ${g.attempt}</p>
+            <h1>${esc(g.title)}</h1>
+            ${g.why ? `<p class="why">${esc(g.why)}</p>` : ''}
+          </div>
+        </div>
+        <button class="icon-btn" data-action="goal-settings" data-goal="${g.id}" aria-label="Edit journey">${icon('pencil')}</button>
+      </header>
+
+      <div class="overview">
+        <div class="ring">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle cx="60" cy="60" r="${r}" class="ring-bg"></circle>
+            <circle cx="60" cy="60" r="${r}" class="ring-fg" style="stroke-dasharray:${circ};stroke-dashoffset:${circ * (1 - pct / 100)}"></circle>
+          </svg>
+          <div class="ring-label"><strong>${pct}%</strong><span>${j.done}/${g.targetDays}</span></div>
+        </div>
+        <div class="kpis">
+          <div class="kpi"><span>Day</span><strong>${dayNum}<small> / ${j.total}</small></strong></div>
+          <div class="kpi"><span>Exceptions left</span><strong>${exLeft}<small> / ${L.MAX_EXCEPTIONS}</small></strong></div>
+          <div class="kpi"><span>Journey length</span><strong>${j.total}<small> days</small></strong></div>
+          <div class="kpi"><span>Started</span><strong class="sm">${fmtDate(g.attemptStart)}</strong></div>
+        </div>
+      </div>
+
+      ${panel}
+
+      <section class="block">
+        <div class="block-head">
+          <h2>Journey</h2>
+          <div class="legend">
+            <span><i class="dot d"></i>Done</span><span><i class="dot e"></i>Exception</span>
+            <span><i class="dot a"></i>Open</span><span><i class="dot l"></i>Locked</span>
+          </div>
+        </div>
+        <p class="muted hint">Hover a glowing circle to check in. On touch, tap it.</p>
+        <div class="journey">
+          ${j.cells.map((c) => cellHTML(c, g, today, nextExc)).join('')}
+        </div>
+      </section>
+      ${pastHTML}
+    </div>`;
+}
+
+function viewAccomplishments() {
+  const tab = state.accTab;
+  const done = L.accomplished(state.goals);
+  const misses = L.notAccomplished(state.goals);
+  const tabs = `
+    <div class="segmented" role="tablist">
+      <button role="tab" aria-selected="${tab === 'accomplished'}" class="${tab === 'accomplished' ? 'on' : ''}" data-action="acc-tab" data-tab="accomplished">${icon('trophy')}Accomplished <b>${done.length}</b></button>
+      <button role="tab" aria-selected="${tab === 'missed'}" class="${tab === 'missed' ? 'on' : ''}" data-action="acc-tab" data-tab="missed">${icon('circle-x')}Not accomplished <b>${misses.length}</b></button>
+    </div>`;
+
+  let list;
+  if (tab === 'accomplished') {
+    list = done.length ? `<div class="acc-grid">${done.map((g) => {
+      const exc = L.exceptionCount(g);
+      return `
+        <a class="acc-card" href="#/goal/${encodeURIComponent(g.id)}" style="--c:${g.color}">
+          <div class="goal-icon">${icon(g.icon)}</div>
+          <div class="acc-body">
+            <h3>${esc(g.title)}</h3>
+            <p>${g.type === 'habit' ? 'Habit' : 'Sankalpa'} · ${g.targetDays} days${exc ? ` · ${exc} exception${exc > 1 ? 's' : ''}` : ''}</p>
+            <small>Completed ${fmtDate(g.completedAt?.slice(0, 10))}${g.attempt > 1 ? ` · attempt ${g.attempt}` : ''}</small>
+          </div>
+          <span class="acc-badge">${icon('circle-check')}</span>
+        </a>`;
+    }).join('')}</div>` : emptyBlock('trophy', 'Nothing accomplished yet', 'Complete a journey and it will land here.');
+  } else {
+    list = misses.length ? `<div class="miss-list">${misses.map((m) => `
+      <div class="miss-card" style="--c:${m.color}">
+        <div class="goal-icon">${icon(m.icon)}</div>
+        <div class="acc-body">
+          <h3>${esc(m.title)} <span class="attempt-tag">#${m.attempt}</span></h3>
+          <p>${fmtDate(m.startDate)} → ${fmtDate(m.endDate)} · ${m.doneCount} of ${m.targetDays} days</p>
+          <small>${esc(m.reason)}</small>
+        </div>
+        <span class="outcome ${m.outcome}">${m.outcome === 'abandoned' ? 'Abandoned' : 'Not kept'}</span>
+      </div>`).join('')}</div>` : emptyBlock('sparkles', 'No misses on record', 'Every journey you have started is still on track or accomplished.');
+  }
+
+  return `
+    <div class="page-in-target">
+      <header class="hero">
+        <p class="eyebrow">Your record</p>
+        <h1>Accomplishments</h1>
+        <p class="muted">Nothing is ever deleted. Each attempt stays here, whether it was kept or not.</p>
+      </header>
+      ${tabs}
+      <section class="block">${list}</section>
+    </div>`;
+}
+
+function emptyBlock(iconName, title, text) {
+  return `<div class="empty small"><div class="empty-orb">${icon(iconName)}</div><h3>${esc(title)}</h3><p class="muted">${esc(text)}</p></div>`;
+}
+
+// ---------- dialogs ----------
+
+function openCreate() {
+  const body = `
+    <form id="create-form" class="form" novalidate>
+      <div class="type-toggle" role="radiogroup" aria-label="Type">
+        <label class="type-card"><input type="radio" name="type" value="habit" checked>
+          ${icon('repeat')}<strong>Habit</strong><small>A 66-day journey</small></label>
+        <label class="type-card"><input type="radio" name="type" value="sankalpa">
+          ${icon('scroll')}<strong>Sankalpa</strong><small>Choose your number of days</small></label>
+      </div>
+      <label class="field"><span>Title</span>
+        <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" required autocomplete="off"></label>
+      <label class="field hidden" data-days-field><span>Days</span>
+        <input name="days" type="number" min="1" max="365" inputmode="numeric" placeholder="e.g. 30"></label>
+      <label class="field"><span>Why (optional)</span>
+        <textarea name="why" rows="2" maxlength="500" placeholder="The reason this matters to you"></textarea></label>
+      <p class="muted form-hint">${icon('wand-sparkles')} The icon is picked for you from your title. You can change it later from Edit.</p>
+      <div class="field"><span>Color</span>${colorPicker(COLORS[0])}</div>
+      <p class="error" data-error hidden></p>
+    </form>`;
+  const footer = `<button class="btn ghost" data-close>Cancel</button><button class="btn primary" form="create-form" type="submit">Start journey</button>`;
+  openModal({
+    title: 'New journey',
+    body,
+    footer,
+    onMount: (w, close) => {
+      const form = w.querySelector('#create-form');
+      const daysField = w.querySelector('[data-days-field]');
+      const errBox = w.querySelector('[data-error]');
+      form.addEventListener('change', (e) => {
+        if (e.target.name === 'type') {
+          daysField.classList.toggle('hidden', e.target.value !== 'sankalpa');
+          w.querySelector('[name="days"]').required = e.target.value === 'sankalpa';
+        }
+      });
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errBox.hidden = true;
+        const fd = new FormData(form);
+        try {
+          const data = L.newGoalData({
+            type: fd.get('type'),
+            title: fd.get('title'),
+            why: fd.get('why'),
+            days: fd.get('days'),
+            icon: fd.get('icon'),
+            color: fd.get('color'),
+          });
+          const id = await db.createGoal(state.user.uid, data);
+          close();
+          location.hash = `#/goal/${encodeURIComponent(id)}`;
+          toast(`${data.title} is on your sidebar`, 'success');
+        } catch (err) {
+          errBox.textContent = err.message;
+          errBox.hidden = false;
+        }
+      });
+      setTimeout(() => form.querySelector('[name="title"]').focus(), 60);
+    },
+  });
+}
+
+function openGoalSettings(g) {
+  const body = `
+    <form id="edit-form" class="form" novalidate>
+      <label class="field"><span>Title</span>
+        <input name="title" maxlength="80" required value="${esc(g.title)}"></label>
+      <label class="field"><span>Why</span>
+        <textarea name="why" rows="2" maxlength="500">${esc(g.why)}</textarea></label>
+      <div class="field"><span>Icon</span>${iconPicker(g.icon)}</div>
+      <div class="field"><span>Color</span>${colorPicker(g.color)}</div>
+      <p class="error" data-error hidden></p>
+      <div class="danger-zone">
+        <div><strong>Abandon this journey</strong><small class="muted">It moves to Not accomplished. Nothing is deleted.</small></div>
+        <button type="button" class="btn danger sm" data-abandon>Abandon</button>
+      </div>
+    </form>`;
+  openModal({
+    title: 'Edit journey',
+    body,
+    footer: `<button class="btn ghost" data-close>Cancel</button><button class="btn primary" form="edit-form" type="submit">Save</button>`,
+    onMount: (w, close) => {
+      const form = w.querySelector('#edit-form');
+      const errBox = w.querySelector('[data-error]');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const title = String(fd.get('title') || '').trim();
+        if (!title) { errBox.textContent = 'Title cannot be empty.'; errBox.hidden = false; return; }
+        try {
+          await db.updateGoalDetails(state.user.uid, g.id, {
+            title: title.slice(0, 80),
+            why: String(fd.get('why') || '').trim().slice(0, 500),
+            icon: fd.get('icon'),
+            color: fd.get('color'),
+          });
+          close();
+          toast('Saved', 'success');
+        } catch (err) {
+          errBox.textContent = err.message;
+          errBox.hidden = false;
+        }
+      });
+      w.querySelector('[data-abandon]').addEventListener('click', async () => {
+        const ok = await confirmDialog({
+          title: 'Abandon this journey?',
+          message: `"${esc(g.title)}" will be closed and listed under Not accomplished. Your progress is kept.`,
+          confirmLabel: 'Abandon',
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await db.abandon(state.user.uid, g.id);
+          close();
+          location.hash = '#/home';
+          toast('Journey closed and recorded', 'info');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+    },
+  });
+}
+
+function openAccount() {
+  const u = state.user;
+  openModal({
+    title: 'Account',
+    body: `
+      <div class="account">
+        <div class="avatar">${u.photoURL ? `<img src="${esc(u.photoURL)}" alt="">` : icon('user')}</div>
+        <div><strong>${esc(u.displayName || 'Signed in')}</strong><small class="muted">${esc(u.email || '')}</small></div>
+      </div>
+      <div class="menu">
+        <button class="menu-item" data-action="export">${icon('download')}<div><strong>Export my data</strong><small class="muted">Download everything as a JSON backup</small></div></button>
+        <button class="menu-item danger-text" data-action="signout">${icon('log-out')}<div><strong>Sign out</strong><small class="muted">Your data stays safe in the cloud</small></div></button>
+      </div>`,
+  });
+}
+
+// ---------- actions ----------
+
+async function checkin(goalId, date, answer) {
+  const g = state.goals.find((x) => x.id === goalId);
+  if (!g) return;
+  if (answer === 'no') {
+    const av = L.exceptionAvailability(g, date);
+    const ok = await confirmDialog({
+      title: av.ok ? 'Use an exception?' : 'Restart this journey?',
+      message: av.ok
+        ? `This day is recorded as an exception. You have ${av.remaining} left and the journey grows by one day.`
+        : `${av.reason === 'too_soon'
+          ? `You missed again within ${L.EXCEPTION_GAP_DAYS} days of your last exception.`
+          : 'All exceptions are used.'}
+           The attempt is saved under Not accomplished and the journey restarts tomorrow.`,
+      confirmLabel: av.ok ? 'Use exception' : 'Restart',
+      danger: !av.ok,
+    });
+    if (!ok) return;
+  }
+  try {
+    const res = await db.checkIn(state.user.uid, goalId, date, answer);
+    if (res.outcome === 'completed') {
+      celebrate(g.title);
+    } else if (res.outcome === 'failed') {
+      toast('Journey restarted. The attempt is saved under Not accomplished.', 'error');
+    } else if (res.outcome === 'exception') {
+      toast(`Exception used. ${res.remaining} left.`, 'info');
+    } else {
+      toast('Done. The next day is unlocked.', 'success');
+    }
+  } catch (err) {
+    toast(err.message || 'Could not save. Check your connection.', 'error');
+  }
+}
+
+async function exportData() {
+  try {
+    const data = await db.exportAll(state.user.uid);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sankalp-export-${L.todayStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('Export downloaded', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function onViewClick(e) {
+  const act = e.target.closest('[data-action]');
+  if (act) {
+    const { action } = act.dataset;
+    switch (action) {
+      case 'new': openCreate(); break;
+      case 'checkin': checkin(act.dataset.goal, act.dataset.date, act.dataset.answer); break;
+      case 'goal-settings': openGoalSettings(state.goals.find((x) => x.id === act.dataset.goal)); break;
+      case 'acc-tab': state.accTab = act.dataset.tab; render(); break;
+      default: break;
+    }
+    return;
+  }
+  // Touch/keyboard: tapping an open day toggles its check-in popover.
+  const cell = e.target.closest('.cell.is-active');
+  document.querySelectorAll('.cell.open').forEach((c) => { if (c !== cell) c.classList.remove('open'); });
+  if (cell) cell.classList.toggle('open');
+}
+
+function onRailClick(e) {
+  const acc = e.target.closest('[data-action="account"]');
+  if (acc) openAccount();
+}
+
+function onModalRootClick(e) {
+  const act = e.target.closest('[data-action]');
+  if (!act) return;
+  if (act.dataset.action === 'signout') {
+    document.querySelector('.modal-backdrop')?.remove();
+    db.logout().then(() => toast('Signed out'));
+  }
+  if (act.dataset.action === 'export') exportData();
+}
+
+// ---------- render loop ----------
+
+function render() {
+  if (!state.authReady) {
+    $('#rail').hidden = true;
+    view().innerHTML = `<div class="splash"><div class="brand-mark pulse">${icon('sparkles')}</div></div>`;
+    refreshIcons();
+    return;
+  }
+  if (!state.user) {
+    $('#rail').hidden = true;
+    view().innerHTML = viewLogin(state.loginError || '');
+    refreshIcons();
+    return;
+  }
+  $('#rail').hidden = false;
+  renderRail();
+
+  const r = route();
+  const routeKey = r.name === 'goal' ? `goal:${r.id}` : r.name;
+  const changed = routeKey !== state.lastRouteKey;
+  state.lastRouteKey = routeKey;
+
+  let html;
+  if (r.name === 'goal') html = viewGoal(r.id);
+  else if (r.name === 'accomplishments') html = viewAccomplishments();
+  else html = viewHome();
+
+  const v = view();
+  // Only animate when the screen itself changes, so live updates do not replay entrance animations.
+  v.classList.toggle('page-in', changed);
+  v.innerHTML = html;
+  refreshIcons();
+  if (changed) setTimeout(() => v.classList.remove('page-in'), 1200);
+}
+
+// ---------- boot ----------
+
+async function boot() {
+  view().addEventListener('click', onViewClick);
+  $('#rail').addEventListener('click', onRailClick);
+  $('#modal-root').addEventListener('click', onModalRootClick);
+  window.addEventListener('hashchange', render);
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-action="login"]')) {
+      state.loginError = '';
+      db.login().catch((err) => {
+        state.loginError = err.message || 'Sign-in failed';
+        render();
+      });
+    }
+  });
+
+  if (!db.init()) {
+    state.authReady = true;
+    view().innerHTML = viewSetup();
+    $('#rail').hidden = true;
+    return;
+  }
+
+  db.completeRedirectLogin().catch((err) => toast(`Sign-in failed: ${err.message}`, 'error'));
+
+  db.onAuthChange((user) => {
+    state.authReady = true;
+    if (!user) {
+      state.user = null;
+      state.goals = [];
+      unsubscribeGoals?.();
+      unsubscribeGoals = null;
+      render();
+      return;
+    }
+    state.user = user;
+    db.ensureUserDoc(user).catch((err) => console.warn('User profile not updated', err));
+    if (!unsubscribeGoals) {
+      unsubscribeGoals = db.subscribeGoals(
+        user.uid,
+        (goals) => { state.goals = goals; state.goalsReady = true; render(); },
+        (err) => toast(`Could not load your data: ${err.message}`, 'error'),
+      );
+    }
+    render();
+  });
+
+  // Re-render every minute so day boundaries (and "unlocks tomorrow") update without a reload.
+  setInterval(() => { if (state.user) render(); }, 60000);
+
+  render();
+}
+
+boot();

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>SANKALP</title>
+  <meta name="description" content="Build habits and keep your sankalpas. One day at a time.">
+  <meta name="theme-color" content="#07070c">
+  <meta name="color-scheme" content="dark">
+
+  <!-- PWA: installable, full-screen, native feel -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SANKALP">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div class="bg-orbs" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <nav id="rail" class="rail" aria-label="Main navigation" hidden></nav>
+
+  <main id="view" class="view" aria-live="polite"></main>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+  <script type="module" src="/js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+    }
+  </script>
+</body>
+</html>
