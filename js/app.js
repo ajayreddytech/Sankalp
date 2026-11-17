@@ -34,6 +34,9 @@ function fmtDate(s) {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+const typeName = (g) => L.TYPE_LABEL[g.type] || 'Habit';
+const keepPhrase = (g) => ({ habit: 'keep this habit', sankalpa: 'keep this sankalpa', smart: 'stick to this goal' })[g.type] || 'keep this habit';
+
 function route() {
   const [name = 'home', id = ''] = location.hash.replace(/^#\/?/, '').split('/');
   return { name: name || 'home', id: decodeURIComponent(id) };
@@ -211,7 +214,7 @@ function goalCard(g, today) {
         <div class="goal-icon">${icon(g.icon)}</div>
         <div class="goal-meta">
           <h3>${esc(g.title)}</h3>
-          <p>${g.type === 'habit' ? 'Habit' : 'Sankalpa'} · ${g.targetDays} days${j.exceptions ? ` · ${j.exceptions} exception${j.exceptions > 1 ? 's' : ''}` : ''}</p>
+          <p>${typeName(g)} · ${g.targetDays} days${j.exceptions ? ` · ${j.exceptions} exception${j.exceptions > 1 ? 's' : ''}` : ''}</p>
         </div>
       </div>
       <div class="bar"><span style="width:${pct}%"></span></div>
@@ -320,28 +323,31 @@ function viewGoal(id) {
   const r = 54;
   const circ = 2 * Math.PI * r;
   const dayNum = L.dayNumber(g, today);
-  const exLeft = L.MAX_EXCEPTIONS - j.exceptions;
+  const policy = L.policyFor(g);
   const nextExc = L.exceptionAvailability(g, j.next?.date || today);
 
   let panel;
   if (g.status === 'completed') {
     panel = `<section class="panel done-panel">${icon('trophy')}<div><h3>Accomplished on ${fmtDate(g.completedAt?.slice(0, 10))}</h3>
       <p class="muted">You completed ${g.targetDays} days${j.exceptions ? ` with ${j.exceptions} exception${j.exceptions > 1 ? 's' : ''}` : ''}.</p></div>
-      <a class="btn ghost sm" href="#/accomplishments">View</a></section>`;
+      <a class="btn ghost sm" href="#/accomplishments">View</a>
+      <button class="btn primary sm" data-action="redo" data-goal="${g.id}">${icon('rotate-ccw')}Redo</button></section>`;
   } else if (g.status === 'abandoned') {
     panel = `<section class="panel muted-panel">${icon('ban')}<div><h3>Closed</h3><p class="muted">This journey was abandoned and is listed under Not accomplished.</p></div></section>`;
   } else if (j.next) {
     const isToday = j.next.date === today;
     const consequence = nextExc.ok
-      ? `A miss uses one of your ${nextExc.remaining} exception${nextExc.remaining > 1 ? 's' : ''} and adds a day to the journey.`
+      ? `A miss uses one of your ${nextExc.remaining} exception${nextExc.remaining > 1 ? 's' : ''} and ${g.type === 'smart' ? 'moves the deadline out by a day' : 'adds a day to the journey'}.`
       : (nextExc.reason === 'too_soon'
         ? `You already used an exception recently. A miss now restarts the journey. The next exception opens on ${fmtDate(nextExc.nextAllowed)}.`
-        : 'All exceptions are used. A miss restarts the journey.');
+        : nextExc.reason === 'not_allowed'
+          ? 'Sankalpas have no exceptions. A miss restarts the journey.'
+          : 'All exceptions are used. A miss restarts the journey.');
     panel = `
       <section class="panel checkin-panel">
         <div class="checkin-copy">
           <p class="eyebrow">${isToday ? 'Today' : 'Pending'} · ${fmtDate(j.next.date)}</p>
-          <h3>Did you ${g.type === 'habit' ? 'keep this habit' : 'keep this sankalpa'} on this day?</h3>
+          <h3>Did you ${keepPhrase(g)} on this day?</h3>
           <p class="muted">${esc(consequence)}</p>
         </div>
         <div class="answer-row">
@@ -372,7 +378,7 @@ function viewGoal(id) {
         <div class="goal-title">
           <span class="goal-icon lg">${icon(g.icon)}</span>
           <div>
-            <p class="eyebrow">${g.type === 'habit' ? 'Habit' : 'Sankalpa'} · Attempt ${g.attempt}</p>
+            <p class="eyebrow">${typeName(g)} · Attempt ${g.attempt}</p>
             <h1>${esc(g.title)}</h1>
             ${g.why ? `<p class="why">${esc(g.why)}</p>` : ''}
           </div>
@@ -390,13 +396,17 @@ function viewGoal(id) {
         </div>
         <div class="kpis">
           <div class="kpi"><span>Day</span><strong>${dayNum}<small> / ${j.total}</small></strong></div>
-          <div class="kpi"><span>Exceptions left</span><strong>${exLeft}<small> / ${L.MAX_EXCEPTIONS}</small></strong></div>
+          ${policy.maxExceptions
+            ? `<div class="kpi"><span>Exceptions left</span><strong>${policy.maxExceptions - j.exceptions}<small> / ${policy.maxExceptions}</small></strong></div>`
+            : '<div class="kpi"><span>Exceptions</span><strong class="sm">None</strong></div>'}
           <div class="kpi"><span>Journey length</span><strong>${j.total}<small> days</small></strong></div>
           <div class="kpi"><span>Started</span><strong class="sm">${fmtDate(g.attemptStart)}</strong></div>
         </div>
       </div>
 
       ${panel}
+
+      ${g.type === 'smart' && g.smart ? smartPlanHTML(g) : ''}
 
       <section class="block">
         <div class="block-head">
@@ -430,15 +440,18 @@ function viewAccomplishments() {
     list = done.length ? `<div class="acc-grid">${done.map((g) => {
       const exc = L.exceptionCount(g);
       return `
-        <a class="acc-card" href="#/goal/${encodeURIComponent(g.id)}" style="--c:${g.color}">
-          <div class="goal-icon">${icon(g.icon)}</div>
-          <div class="acc-body">
-            <h3>${esc(g.title)}</h3>
-            <p>${g.type === 'habit' ? 'Habit' : 'Sankalpa'} · ${g.targetDays} days${exc ? ` · ${exc} exception${exc > 1 ? 's' : ''}` : ''}</p>
-            <small>Completed ${fmtDate(g.completedAt?.slice(0, 10))}${g.attempt > 1 ? ` · attempt ${g.attempt}` : ''}</small>
-          </div>
-          <span class="acc-badge">${icon('circle-check')}</span>
-        </a>`;
+        <article class="acc-card" style="--c:${g.color}">
+          <a class="acc-main" href="#/goal/${encodeURIComponent(g.id)}">
+            <div class="goal-icon">${icon(g.icon)}</div>
+            <div class="acc-body">
+              <h3>${esc(g.title)}</h3>
+              <p>${typeName(g)} · ${g.targetDays} days${exc ? ` · ${exc} exception${exc > 1 ? 's' : ''}` : ''}</p>
+              <small>Completed ${fmtDate(g.completedAt?.slice(0, 10))}${g.attempt > 1 ? ` · attempt ${g.attempt}` : ''}</small>
+            </div>
+            <span class="acc-badge">${icon('circle-check')}</span>
+          </a>
+          <button class="btn ghost sm redo-btn" data-action="redo" data-goal="${g.id}">${icon('rotate-ccw')}Redo</button>
+        </article>`;
     }).join('')}</div>` : emptyBlock('trophy', 'Nothing accomplished yet', 'Complete a journey and it will land here.');
   } else {
     list = misses.length ? `<div class="miss-list">${misses.map((m) => `
@@ -471,21 +484,65 @@ function emptyBlock(iconName, title, text) {
 
 // ---------- dialogs ----------
 
+// The five SMART answers as form fields. Used by the create and edit dialogs.
+function smartFieldsHTML(values = {}) {
+  return L.SMART_FIELDS.map((f) => `
+    <label class="field">
+      <span>${esc(f.label)}</span>
+      <small class="muted field-hint">${esc(f.hint)}</small>
+      <textarea name="${f.key}" rows="2" maxlength="500">${esc(values[f.key] || '')}</textarea>
+    </label>`).join('');
+}
+
+// Shows only the fields that belong to the chosen type.
+function showTypeFields(w, type) {
+  w.querySelectorAll('[data-only]').forEach((el) => { el.hidden = el.dataset.only !== type; });
+  const label = w.querySelector('[data-title-label]');
+  if (label) label.textContent = type === 'smart' ? 'Goal' : 'Title';
+}
+
+function smartFormValues(fd) {
+  return Object.fromEntries(L.SMART_FIELDS.map((f) => [f.key, fd.get(f.key)]));
+}
+
+function smartPlanHTML(g) {
+  return `
+    <section class="block">
+      <div class="block-head"><h2>Your SMART plan</h2><span class="muted">Deadline ${fmtDate(g.smart.endDate)}</span></div>
+      <div class="smart-plan">${L.SMART_FIELDS.map((f) => `
+        <div class="smart-item">
+          <span class="smart-k">${esc(f.label)}</span>
+          <p>${esc(g.smart[f.key])}</p>
+        </div>`).join('')}</div>
+    </section>`;
+}
+
 function openCreate() {
+  const today = L.todayStr();
   const body = `
     <form id="create-form" class="form" novalidate>
-      <div class="type-toggle" role="radiogroup" aria-label="Type">
+      <div class="type-toggle three" role="radiogroup" aria-label="Type">
         <label class="type-card"><input type="radio" name="type" value="habit" checked>
-          ${icon('repeat')}<strong>Habit</strong><small>A 66-day journey</small></label>
+          ${icon('repeat')}<strong>Habit</strong><small>66 days</small></label>
         <label class="type-card"><input type="radio" name="type" value="sankalpa">
-          ${icon('scroll')}<strong>Sankalpa</strong><small>Choose your number of days</small></label>
+          ${icon('scroll')}<strong>Sankalpa</strong><small>Your days, no misses</small></label>
+        <label class="type-card"><input type="radio" name="type" value="smart">
+          ${icon('target')}<strong>SMART</strong><small>Goal with a deadline</small></label>
       </div>
-      <label class="field"><span>Title</span>
+      <label class="field"><span data-title-label>Title</span>
         <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" required autocomplete="off"></label>
-      <label class="field hidden" data-days-field><span>Days</span>
+      <label class="field" data-only="sankalpa" hidden><span>Days</span>
         <input name="days" type="number" min="1" max="365" inputmode="numeric" placeholder="e.g. 30"></label>
-      <label class="field"><span>Start date</span>
-        <input name="startDate" type="date" value="${L.todayStr()}" required></label>
+      <div class="field-row">
+        <label class="field"><span>Start date</span>
+          <input name="startDate" type="date" value="${today}" required></label>
+        <label class="field" data-only="smart" hidden><span>Deadline</span>
+          <input name="endDate" type="date" value="${L.addDays(today, 29)}"></label>
+      </div>
+      <div data-only="smart" hidden>
+        <p class="muted form-hint">${icon('target')} Answer each part in your own words. You check in every day until the deadline.</p>
+        ${smartFieldsHTML()}
+      </div>
       <label class="field"><span>Why (optional)</span>
         <textarea name="why" rows="2" maxlength="500" placeholder="The reason this matters to you"></textarea></label>
       <p class="muted form-hint">${icon('wand-sparkles')} The icon is picked for you from your title. You can change it later from Edit.</p>
@@ -499,13 +556,9 @@ function openCreate() {
     footer,
     onMount: (w, close) => {
       const form = w.querySelector('#create-form');
-      const daysField = w.querySelector('[data-days-field]');
       const errBox = w.querySelector('[data-error]');
       form.addEventListener('change', (e) => {
-        if (e.target.name === 'type') {
-          daysField.classList.toggle('hidden', e.target.value !== 'sankalpa');
-          w.querySelector('[name="days"]').required = e.target.value === 'sankalpa';
-        }
+        if (e.target.name === 'type') showTypeFields(w, e.target.value);
       });
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -518,6 +571,8 @@ function openCreate() {
             why: fd.get('why'),
             days: fd.get('days'),
             startDate: fd.get('startDate'),
+            endDate: fd.get('endDate'),
+            smart: smartFormValues(fd),
             icon: fd.get('icon'),
             color: fd.get('color'),
           });
@@ -535,6 +590,52 @@ function openCreate() {
   });
 }
 
+// Starts a new journey from an accomplished one. The date (and length or deadline) is chosen in the pop-up.
+function openRedo(g) {
+  if (!g || g.status !== 'completed') return;
+  const d = L.redoDefaults(g);
+  const body = `
+    <form id="redo-form" class="form" novalidate>
+      <p class="muted">${esc(g.title)} starts again as a new ${esc(typeName(g).toLowerCase())}. The accomplished record stays where it is.</p>
+      <label class="field"><span>Start date</span>
+        <input name="startDate" type="date" value="${d.startDate}" required></label>
+      ${g.type === 'sankalpa' ? `<label class="field"><span>Days</span>
+        <input name="days" type="number" min="1" max="365" inputmode="numeric" value="${d.days}"></label>` : ''}
+      ${g.type === 'smart' ? `<label class="field"><span>Deadline</span>
+        <input name="endDate" type="date" value="${d.endDate}" required></label>` : ''}
+      ${g.type === 'habit' ? `<p class="muted form-hint">A habit is always ${L.HABIT_DAYS} days.</p>` : ''}
+      <p class="error" data-error hidden></p>
+    </form>`;
+  openModal({
+    title: 'Redo this journey',
+    body,
+    footer: `<button class="btn ghost" data-close>Cancel</button><button class="btn primary" form="redo-form" type="submit">${icon('rotate-ccw')}Start again</button>`,
+    onMount: (w, close) => {
+      const form = w.querySelector('#redo-form');
+      const errBox = w.querySelector('[data-error]');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errBox.hidden = true;
+        const fd = new FormData(form);
+        try {
+          const data = L.redoData(g, {
+            startDate: fd.get('startDate'),
+            days: fd.get('days'),
+            endDate: fd.get('endDate'),
+          });
+          const id = await db.createGoal(state.user.uid, data);
+          close();
+          location.hash = `#/goal/${encodeURIComponent(id)}`;
+          toast(`${g.title} is back on your sidebar`, 'success');
+        } catch (err) {
+          errBox.textContent = err.message;
+          errBox.hidden = false;
+        }
+      });
+    },
+  });
+}
+
 function openGoalSettings(g) {
   // The start date can change only before the first check-in, so the grid never shifts under existing days.
   const startEditable = g.status === 'active' && Object.keys(g.checkins || {}).length === 0;
@@ -544,6 +645,11 @@ function openGoalSettings(g) {
         <input name="title" maxlength="80" required value="${esc(g.title)}"></label>
       <label class="field"><span>Start date${startEditable ? '' : ' (locked after the first check-in)'}</span>
         <input name="startDate" type="date" value="${esc(g.attemptStart)}" ${startEditable ? '' : 'disabled'}></label>
+      ${g.type === 'smart' ? `
+        ${startEditable
+          ? `<label class="field"><span>Deadline</span><input name="endDate" type="date" value="${esc(g.smart?.endDate || '')}"></label>`
+          : '<p class="muted form-hint">The deadline is locked after the first check-in.</p>'}
+        ${smartFieldsHTML(g.smart || {})}` : ''}
       <label class="field"><span>Why</span>
         <textarea name="why" rows="2" maxlength="500">${esc(g.why)}</textarea></label>
       <div class="field"><span>Icon</span>${iconPicker(g.icon)}</div>
@@ -578,6 +684,12 @@ function openGoalSettings(g) {
             color: fd.get('color'),
           };
           if (startEditable) fields.attemptStart = L.normalizeStartDate(fd.get('startDate'));
+          if (g.type === 'smart') {
+            const start = fields.attemptStart || g.attemptStart;
+            const end = startEditable ? L.normalizeEndDate(fd.get('endDate'), start) : g.smart.endDate;
+            fields.smart = { ...L.cleanSmart(smartFormValues(fd)), endDate: end };
+            fields.targetDays = L.smartLength(start, end);
+          }
           await db.updateGoalDetails(state.user.uid, g.id, fields);
           close();
           toast('Saved', 'success');
@@ -651,10 +763,10 @@ async function checkin(goalId, date, answer) {
     const ok = await confirmDialog({
       title: av.ok ? 'Use an exception?' : 'Restart this journey?',
       message: av.ok
-        ? `This day is recorded as an exception. You have ${av.remaining} left and the journey grows by one day.`
+        ? `This day is recorded as an exception. You have ${av.remaining} left and ${g.type === 'smart' ? 'the deadline moves out by one day' : 'the journey grows by one day'}.`
         : `${av.reason === 'too_soon'
-          ? `You missed again within ${L.EXCEPTION_GAP_DAYS} days of your last exception.`
-          : 'All exceptions are used.'}
+          ? `You missed again within ${L.policyFor(g).gapDays} days of your last exception.`
+          : av.reason === 'not_allowed' ? 'Sankalpas have no exceptions.' : 'All exceptions are used.'}
            The attempt is saved under Not accomplished and the journey restarts tomorrow.`,
       confirmLabel: av.ok ? 'Use exception' : 'Restart',
       danger: !av.ok,
@@ -704,6 +816,7 @@ function onViewClick(e) {
       case 'checkin': checkin(act.dataset.goal, act.dataset.date, act.dataset.answer); break;
       case 'goal-settings': openGoalSettings(state.goals.find((x) => x.id === act.dataset.goal)); break;
       case 'acc-tab': state.accTab = act.dataset.tab; render(); break;
+      case 'redo': openRedo(state.goals.find((x) => x.id === act.dataset.goal)); break;
       default: break;
     }
     return;

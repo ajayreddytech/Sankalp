@@ -65,10 +65,15 @@ Open the printed URL and sign in with Google.
 |---|---|
 | Habit length | 66 days by default. |
 | Sankalpa length | Chosen by you (1 to 365 days). |
+| SMART goal | Your goal with five answers (Specific, Measurable, Actionable, Realistic, Time-bound) and a deadline. Checked in daily until the deadline. |
+| SMART length | From the start date to the deadline, both days included (max 365). |
 | Journey grid | Circles fill row by row. Only the open day can be checked. The next day unlocks after you check in. |
 | Done | Circle turns green and the next day unlocks. |
 | Missed, first exception | Uses an exception. The journey grows by one day (66 becomes 67). |
 | Second exception | Allowed only **15 or more days** after the first. Max 2 per attempt. |
+| Sankalpa exceptions | None. Any miss restarts the sankalpa. |
+| SMART exceptions | Max 2 per attempt, no gap rule. Each one moves the deadline out by a day. |
+| Redo | An accomplished journey can be started again from Accomplishments or its page. Pick a new start date (and length or deadline). The original stays under Accomplishments. |
 | Missed, not eligible | Restart. The attempt is archived under Not accomplished. The new attempt starts the next day. |
 | Two consecutive misses | Always a restart (the second miss is within 15 days of the first). |
 | Completion | When the number of done days reaches the target, the journey moves to Accomplishments. |

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   newGoalData, applyCheckin, applyAbandon, journey, totalCells, addDays, diffDays, notAccomplished, accomplished,
-  suggestIcon,
+  suggestIcon, redoData, redoDefaults, exceptionAvailability,
 } from '../js/logic.js';
 
 test('icon is chosen automatically from the title', () => {
@@ -164,4 +164,105 @@ test('a chosen start date becomes the first day; blank means today', async () =>
   assert.equal(normalizeStartDate('2026-02-28', now), '2026-02-28');
   assert.throws(() => normalizeStartDate('2026-02-30', now));
   assert.throws(() => normalizeStartDate('10/01/2026', now));
+});
+
+// ---------- sankalpa: no exceptions ----------
+
+test('a sankalpa has no exceptions: the first miss restarts it', () => {
+  const g = { id: 's1', ...newGoalData({ type: 'sankalpa', title: 'Walk', days: 10, startDate: '2026-01-01', now: at('2026-01-01') }) };
+  const res = applyCheckin(g, '2026-01-01', 'no', at('2026-01-01'));
+  assert.equal(res.outcome, 'failed');
+  assert.match(res.reason, /no exceptions/);
+  assert.equal(exceptionAvailability(g, '2026-01-01').reason, 'not_allowed');
+});
+
+// ---------- SMART goals ----------
+
+const smartInput = {
+  specific: 'Run 5 km in the park near home',
+  measurable: 'Log distance and time after each run',
+  actionable: 'Run 3 times a week, starting with 20 minutes',
+  realistic: 'I already walk daily and have 30 minutes free',
+  timeBound: 'Start now, finish 5 km non-stop by the deadline',
+};
+
+test('a SMART goal runs from its start to its deadline, both days included', () => {
+  const s = newGoalData({
+    type: 'smart', title: 'Run 5 km', smart: smartInput,
+    startDate: '2026-01-01', endDate: '2026-01-30', now: at('2026-01-01'),
+  });
+  assert.equal(s.type, 'smart');
+  assert.equal(s.targetDays, 30);
+  assert.equal(s.smart.endDate, '2026-01-30');
+  assert.equal(s.smart.specific, smartInput.specific);
+  assert.equal(s.icon, 'footprints'); // the title word "Run" picks the icon
+});
+
+test('a SMART goal needs all five parts and a valid deadline', () => {
+  const base = { type: 'smart', title: 'Run', startDate: '2026-01-01', now: at('2026-01-01') };
+  assert.throws(() => newGoalData({ ...base, endDate: '2026-01-30', smart: { ...smartInput, realistic: '  ' } }), /Realistic/);
+  assert.throws(() => newGoalData({ ...base, endDate: '2025-12-31', smart: smartInput }), /on or after/);
+  assert.throws(() => newGoalData({ ...base, endDate: '', smart: smartInput }), /deadline/);
+});
+
+test('a SMART goal allows 2 exception days, and each one pushes the deadline out by a day', () => {
+  const s = { id: 'm1', ...newGoalData({
+    type: 'smart', title: 'Run', smart: smartInput, startDate: '2026-01-01', endDate: '2026-01-03', now: at('2026-01-01'),
+  }) };
+  // day 1 miss -> exception, day 2 miss (next day, no gap rule) -> exception, deadline now 5 cells
+  const first = applyCheckin(s, '2026-01-01', 'no', at('2026-01-01'));
+  assert.equal(first.outcome, 'exception');
+  let g = { ...s, ...first.patch };
+  const second = applyCheckin(g, '2026-01-02', 'no', at('2026-01-02'));
+  assert.equal(second.outcome, 'exception');
+  g = { ...g, ...second.patch };
+  assert.equal(totalCells(g), 5);
+  // third miss on day 3 has no exception left -> restart
+  const third = applyCheckin(g, '2026-01-03', 'no', at('2026-01-03'));
+  assert.equal(third.outcome, 'failed');
+  assert.match(third.reason, /already used/);
+});
+
+test('a SMART goal completes after its target number of done days, exceptions do not count as done', () => {
+  let g = { id: 'm2', ...newGoalData({
+    type: 'smart', title: 'Run', smart: smartInput, startDate: '2026-01-01', endDate: '2026-01-03', now: at('2026-01-01'),
+  }) };
+  ({ goal: g } = run(g, [['2026-01-01', 'no'], ['2026-01-02', 'yes'], ['2026-01-03', 'yes'], ['2026-01-04', 'yes']]));
+  assert.equal(g.status, 'completed');
+  assert.equal(journey(g, '2026-01-10').done, 3);
+});
+
+// ---------- redo ----------
+
+test('redo starts a new journey with the same settings and links back to the original', () => {
+  let g = { id: 'orig', ...newGoalData({ type: 'habit', title: 'Read 10 pages', why: 'Learn', startDate: '2026-01-01', now: at('2026-01-01') }) };
+  const answers = [];
+  for (let i = 0; i < 66; i++) answers.push([addDays('2026-01-01', i), 'yes']);
+  ({ goal: g } = run(g, answers));
+  assert.equal(g.status, 'completed');
+
+  const again = redoData(g, { startDate: '2026-04-01', now: at('2026-04-01') });
+  assert.equal(again.title, 'Read 10 pages');
+  assert.equal(again.why, 'Learn');
+  assert.equal(again.targetDays, 66);
+  assert.equal(again.attemptStart, '2026-04-01');
+  assert.equal(again.status, 'active');
+  assert.equal(again.redoOf, 'orig');
+  assert.deepEqual(again.checkins, {});
+});
+
+test('redo of a sankalpa or SMART goal takes the chosen length or deadline', () => {
+  const s = { id: 'x', ...newGoalData({ type: 'sankalpa', title: 'Walk', days: 12, startDate: '2026-01-01', now: at('2026-01-01') }), status: 'completed' };
+  assert.equal(redoData(s, { startDate: '2026-02-01', days: 20, now: at('2026-02-01') }).targetDays, 20);
+  const m = { id: 'y', ...newGoalData({ type: 'smart', title: 'Run', smart: smartInput, startDate: '2026-01-01', endDate: '2026-01-10', now: at('2026-01-01') }), status: 'completed' };
+  const d = redoDefaults(m, '2026-02-01');
+  assert.equal(d.endDate, '2026-02-10');
+  const again = redoData(m, { startDate: '2026-02-01', endDate: d.endDate, now: at('2026-02-01') });
+  assert.equal(again.targetDays, 10);
+  assert.equal(again.smart.timeBound, smartInput.timeBound);
+});
+
+test('only accomplished journeys can be redone', () => {
+  const g = { id: 'a', ...newGoalData({ type: 'habit', title: 'Read', startDate: '2026-01-01', now: at('2026-01-01') }) };
+  assert.throws(() => redoData(g, { startDate: '2026-02-01' }), /accomplished/);
 });

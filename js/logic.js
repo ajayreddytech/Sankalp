@@ -2,10 +2,24 @@
 // Every journey is stored as a "goal" document. Dates are local calendar strings "YYYY-MM-DD".
 
 export const HABIT_DAYS = 66;
-export const MAX_EXCEPTIONS = 2;
-export const EXCEPTION_GAP_DAYS = 15; // a second exception must be at least this many days after the first
+export const MAX_EXCEPTIONS = 2;        // habit: max exception days per attempt
+export const EXCEPTION_GAP_DAYS = 15;   // habit: a second exception must be at least this many days after the first
+export const SMART_MAX_EXCEPTIONS = 2;  // SMART goal: 2 exception days, each one pushes the deadline out by a day
 export const SANKALPA_MIN_DAYS = 1;
 export const SANKALPA_MAX_DAYS = 365;
+export const SMART_MAX_DAYS = 365;
+
+export const TYPES = ['habit', 'sankalpa', 'smart'];
+export const TYPE_LABEL = { habit: 'Habit', sankalpa: 'Sankalpa', smart: 'SMART goal' };
+
+// The five parts of a SMART goal, in the order the user answers them.
+export const SMART_FIELDS = [
+  { key: 'specific', label: 'Specific', hint: 'What exactly will you do, and where or with whom?' },
+  { key: 'measurable', label: 'Measurable', hint: 'How will you count or show progress? e.g. pages, km, rupees' },
+  { key: 'actionable', label: 'Actionable', hint: 'What are the first concrete steps you will take?' },
+  { key: 'realistic', label: 'Realistic', hint: 'Why is this doable with your time, skills and resources?' },
+  { key: 'timeBound', label: 'Time-bound', hint: 'When does it start and end, and why that deadline?' },
+];
 
 // ---------- date helpers ----------
 
@@ -65,10 +79,32 @@ export function suggestIcon(title, type = 'habit') {
   for (const [pattern, name] of ICON_RULES) {
     if (pattern.test(title || '')) return name;
   }
-  return type === 'sankalpa' ? 'mountain' : 'sparkles';
+  if (type === 'sankalpa') return 'mountain';
+  if (type === 'smart') return 'target';
+  return 'sparkles';
+}
+
+// ---------- rules per type ----------
+
+/** How many exception days a journey type allows, and how far apart a second one must be. */
+export function policyFor(goal) {
+  if (goal.type === 'sankalpa') return { maxExceptions: 0, gapDays: 0 };
+  if (goal.type === 'smart') return { maxExceptions: SMART_MAX_EXCEPTIONS, gapDays: 0 };
+  return { maxExceptions: MAX_EXCEPTIONS, gapDays: EXCEPTION_GAP_DAYS };
 }
 
 // ---------- goal creation ----------
+
+function normalizeDate(value, message) {
+  const s = String(value ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error(message);
+  const [y, m, d] = s.split('-').map(Number);
+  const real = new Date(Date.UTC(y, m - 1, d));
+  if (real.getUTCFullYear() !== y || real.getUTCMonth() !== m - 1 || real.getUTCDate() !== d) {
+    throw new Error(message);
+  }
+  return s;
+}
 
 /**
  * Validates a "YYYY-MM-DD" start date from a form. Empty means today.
@@ -77,36 +113,67 @@ export function suggestIcon(title, type = 'habit') {
 export function normalizeStartDate(value, now = new Date()) {
   const s = String(value ?? '').trim();
   if (!s) return todayStr(now);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error('Pick a valid start date.');
-  const [y, m, d] = s.split('-').map(Number);
-  const real = new Date(Date.UTC(y, m - 1, d));
-  if (real.getUTCFullYear() !== y || real.getUTCMonth() !== m - 1 || real.getUTCDate() !== d) {
-    throw new Error('Pick a valid start date.');
-  }
-  return s;
+  return normalizeDate(s, 'Pick a valid start date.');
 }
 
-export function newGoalData({ type, title, why = '', days, icon, color, startDate, now = new Date() }) {
-  const clean = String(title || '').trim();
-  if (!clean) throw new Error('Give your habit or sankalpa a title.');
-  if (clean.length > 80) throw new Error('Title must be 80 characters or fewer.');
-  if (type !== 'habit' && type !== 'sankalpa') throw new Error('Unknown type.');
+/** Number of days a SMART goal runs, both ends included. */
+export function smartLength(startDate, endDate) {
+  if (endDate < startDate) throw new Error('The deadline must be on or after the start date.');
+  const n = diffDays(startDate, endDate) + 1;
+  if (n > SMART_MAX_DAYS) throw new Error(`A SMART goal can run for at most ${SMART_MAX_DAYS} days.`);
+  return n;
+}
 
+export function normalizeEndDate(value, startDate) {
+  const end = normalizeDate(value, 'Pick a valid deadline date.');
+  smartLength(startDate, end);
+  return end;
+}
+
+/** Checks the five SMART answers. Every part is required. */
+export function cleanSmart(input = {}) {
+  const out = {};
+  for (const { key, label } of SMART_FIELDS) {
+    const v = String(input[key] ?? '').trim();
+    if (!v) throw new Error(`Fill in the "${label}" part.`);
+    if (v.length > 500) throw new Error(`"${label}" must be 500 characters or fewer.`);
+    out[key] = v;
+  }
+  return out;
+}
+
+export function newGoalData({
+  type, title, why = '', days, endDate, smart, icon, color, startDate, redoOf = null, now = new Date(),
+}) {
+  const clean = String(title || '').trim();
+  if (!clean) throw new Error(type === 'smart' ? 'Write your SMART goal.' : 'Give your habit or sankalpa a title.');
+  if (clean.length > 80) throw new Error('Title must be 80 characters or fewer.');
+  if (!TYPES.includes(type)) throw new Error('Unknown type.');
+
+  const start = normalizeStartDate(startDate, now);
   let targetDays = HABIT_DAYS;
+  let smartData = null;
+
   if (type === 'sankalpa') {
     targetDays = Math.floor(Number(days));
     if (!Number.isFinite(targetDays) || targetDays < SANKALPA_MIN_DAYS || targetDays > SANKALPA_MAX_DAYS) {
       throw new Error(`Sankalpa length must be between ${SANKALPA_MIN_DAYS} and ${SANKALPA_MAX_DAYS} days.`);
     }
   }
+  if (type === 'smart') {
+    const end = normalizeEndDate(endDate, start);
+    targetDays = smartLength(start, end);
+    smartData = { ...cleanSmart(smart), endDate: end };
+  }
+
   const iso = now.toISOString();
-  const start = normalizeStartDate(startDate, now);
   return {
     schemaVersion: 1,
     type,
     title: clean,
     why: String(why || '').trim().slice(0, 500),
     targetDays,
+    smart: smartData,        // null unless type is 'smart'
     icon: icon || suggestIcon(clean, type),
     color: color || '#8b5cf6',
     status: 'active',
@@ -114,10 +181,43 @@ export function newGoalData({ type, title, why = '', days, icon, color, startDat
     attemptStart: start,
     checkins: {},          // { "YYYY-MM-DD": "done" | "exception" } for the current attempt
     history: [],           // archived attempts: failed / abandoned (never deleted)
+    redoOf,                // id of the accomplished journey this one repeats, or null
     createdAt: iso,
     updatedAt: iso,
     completedAt: null,
   };
+}
+
+// ---------- redo ----------
+
+/** Default values for the Redo dialog: start today, same length as before. */
+export function redoDefaults(goal, today = todayStr()) {
+  return {
+    startDate: today,
+    days: goal.targetDays,
+    endDate: addDays(today, goal.targetDays - 1),
+  };
+}
+
+/**
+ * Builds a new journey that repeats an accomplished one. The original stays under Accomplishments.
+ * Only accomplished journeys can be redone.
+ */
+export function redoData(goal, { startDate, days, endDate, now = new Date() } = {}) {
+  if (goal.status !== 'completed') throw new Error('Only accomplished journeys can be redone.');
+  return newGoalData({
+    type: goal.type,
+    title: goal.title,
+    why: goal.why,
+    days: goal.type === 'sankalpa' ? (days ?? goal.targetDays) : undefined,
+    endDate: goal.type === 'smart' ? endDate : undefined,
+    smart: goal.smart || undefined,
+    icon: goal.icon,
+    color: goal.color,
+    startDate,
+    redoOf: goal.id,
+    now,
+  });
 }
 
 // ---------- journey math ----------
@@ -142,20 +242,24 @@ export function totalCells(goal) {
 }
 
 export function exceptionAvailability(goal, date) {
+  const { maxExceptions, gapDays } = policyFor(goal);
+  if (maxExceptions === 0) {
+    return { ok: false, reason: 'not_allowed', remaining: 0 };
+  }
   const used = exceptionDates(goal);
-  if (used.length >= MAX_EXCEPTIONS) {
+  if (used.length >= maxExceptions) {
     return { ok: false, reason: 'exhausted', remaining: 0 };
   }
   const last = used[used.length - 1];
-  if (last && diffDays(last, date) < EXCEPTION_GAP_DAYS) {
+  if (last && gapDays && diffDays(last, date) < gapDays) {
     return {
       ok: false,
       reason: 'too_soon',
-      remaining: MAX_EXCEPTIONS - used.length,
-      nextAllowed: addDays(last, EXCEPTION_GAP_DAYS),
+      remaining: maxExceptions - used.length,
+      nextAllowed: addDays(last, gapDays),
     };
   }
-  return { ok: true, remaining: MAX_EXCEPTIONS - used.length };
+  return { ok: true, remaining: maxExceptions - used.length };
 }
 
 /**
@@ -236,9 +340,7 @@ export function applyCheckin(goal, date, answer, now = new Date()) {
   }
 
   // Failure: archive this attempt and restart the day after the missed day.
-  const reason = avail.reason === 'too_soon'
-    ? `Missed again within ${EXCEPTION_GAP_DAYS} days of the last exception`
-    : 'All exceptions were already used';
+  const reason = missReason(avail);
   return {
     outcome: 'failed',
     reason,
@@ -250,6 +352,13 @@ export function applyCheckin(goal, date, answer, now = new Date()) {
       updatedAt: iso,
     },
   };
+}
+
+/** Why a miss cannot be covered by an exception. Used in the archive and in the UI. */
+export function missReason(avail) {
+  if (avail.reason === 'not_allowed') return 'Missed a day. Sankalpas have no exceptions';
+  if (avail.reason === 'too_soon') return `Missed again within ${EXCEPTION_GAP_DAYS} days of the last exception`;
+  return 'All exceptions were already used';
 }
 
 export function applyAbandon(goal, now = new Date()) {
