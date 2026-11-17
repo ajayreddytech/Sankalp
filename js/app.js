@@ -2,12 +2,37 @@
 import * as db from './db.js';
 import * as L from './logic.js';
 
+// Every name here is checked against the Lucide build in index.html. The search box filters this list.
 const ICONS = [
   'target', 'dumbbell', 'book-open', 'droplet', 'moon', 'sun', 'brain', 'heart', 'pen-line', 'leaf',
-  'flame', 'footprints', 'coffee', 'apple', 'bed', 'music', 'code', 'mountain', 'sparkles', 'zap',
-  'star', 'wallet', 'languages', 'piggy-bank',
+  'flame', 'footprints', 'coffee', 'apple', 'ban', 'music', 'code', 'languages', 'piggy-bank', 'mountain',
+  'sparkles', 'zap', 'star', 'wallet',
+  'book-marked', 'bookmark', 'graduation-cap', 'school', 'pencil', 'pen', 'notebook', 'notebook-pen',
+  'scroll-text', 'file-text', 'library',
+  'bike', 'car', 'plane', 'mountain-snow', 'tent', 'trees', 'waves', 'sprout', 'flower', 'flower-2',
+  'bean', 'carrot', 'cherry', 'citrus', 'egg', 'fish', 'ham', 'beef', 'milk', 'cookie', 'cake',
+  'alarm-clock', 'timer', 'hourglass', 'calendar', 'calendar-check', 'clock', 'sunrise', 'sunset',
+  'cloud', 'cloud-sun', 'rainbow', 'umbrella',
+  'bed', 'bed-double', 'armchair', 'lamp', 'house', 'key-round', 'lock', 'shield', 'shield-check',
+  'activity', 'heart-pulse', 'stethoscope', 'pill', 'syringe', 'thermometer', 'hand-heart', 'smile', 'laugh',
+  'trophy', 'medal', 'crown', 'award', 'gem', 'diamond', 'rocket', 'compass', 'map-pin', 'globe',
+  'plane-takeoff', 'anchor',
+  'camera', 'image', 'palette', 'brush', 'paintbrush', 'film', 'clapperboard', 'headphones', 'mic',
+  'guitar', 'piano', 'drum', 'radio',
+  'gamepad-2', 'puzzle', 'dice-5', 'ticket',
+  'wrench', 'hammer', 'scissors', 'ruler', 'calculator', 'banknote', 'coins', 'circle-dollar-sign',
+  'receipt', 'briefcase',
+  'phone', 'smartphone', 'laptop', 'terminal', 'database', 'server', 'bug', 'git-branch',
+  'users', 'user-round', 'hand', 'handshake', 'message-circle', 'mail', 'send',
+  'eye', 'glasses', 'feather', 'infinity', 'orbit', 'atom', 'flask-conical', 'microscope', 'telescope',
+  'swords', 'shield-half', 'flag', 'bell', 'check-check', 'circle-check', 'repeat', 'rotate-ccw',
 ];
-const COLORS = ['#8b5cf6', '#22d3ee', '#34d399', '#fbbf24', '#fb7185', '#38bdf8'];
+// Presets for quick picking. Any other colour comes from the rectangle or hue slider.
+const COLORS = [
+  '#8b5cf6', '#6366f1', '#3b82f6', '#0ea5e9', '#22d3ee', '#14b8a6', '#10b981', '#34d399',
+  '#84cc16', '#a3e635', '#eab308', '#fbbf24', '#f59e0b', '#f97316', '#ef4444', '#fb7185',
+  '#e11d48', '#ec4899', '#f472b6', '#d946ef', '#a855f7', '#94a3b8', '#e2e8f0', '#78716c',
+];
 
 const state = {
   authReady: false,
@@ -139,20 +164,132 @@ function celebrate(title) {
 
 // ---------- shared pickers ----------
 
-function iconPicker(selected) {
-  return `<div class="picker-grid">${ICONS.map((name) => `
-    <label class="pick" title="${esc(name)}">
-      <input type="radio" name="icon" value="${esc(name)}" ${name === selected ? 'checked' : ''}>
-      <span>${icon(name)}</span>
-    </label>`).join('')}</div>`;
+// Searchable icon grid. With auto: true, an "Auto" choice (empty value) is first and selected by default.
+function iconPicker(selected = '', { auto = false } = {}) {
+  const names = ICONS.includes(selected) || !selected ? ICONS : [selected, ...ICONS];
+  const autoOpt = auto ? `
+    <label class="pick auto" data-name="auto">
+      <input type="radio" name="icon" value="" checked>
+      <span>${icon('wand-sparkles')}<em>Auto, from your title</em></span>
+    </label>` : '';
+  return `
+    <div class="ipick" data-icon-picker>
+      <input class="ipick-search" type="search" placeholder="Search icons, e.g. book, heart, moon" aria-label="Search icons" autocomplete="off">
+      <div class="picker-grid icons">${autoOpt}${names.map((name) => `
+        <label class="pick" data-name="${esc(name)}" title="${esc(name)}">
+          <input type="radio" name="icon" value="${esc(name)}" ${!auto && name === selected ? 'checked' : ''}>
+          <span>${icon(name)}</span>
+        </label>`).join('')}</div>
+      <p class="muted ipick-empty" hidden>No icon matches that search.</p>
+    </div>`;
 }
 
-function colorPicker(selected) {
-  return `<div class="swatches">${COLORS.map((c) => `
-    <label class="swatch" style="--c:${c}">
-      <input type="radio" name="color" value="${c}" ${c === selected ? 'checked' : ''}>
-      <span></span>
-    </label>`).join('')}</div>`;
+function wireIconPicker(root) {
+  const el = root.querySelector('[data-icon-picker]');
+  if (!el) return;
+  const search = el.querySelector('.ipick-search');
+  const items = [...el.querySelectorAll('.pick')];
+  const empty = el.querySelector('.ipick-empty');
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase().replace(/\s+/g, '-');
+    let shown = 0;
+    for (const it of items) {
+      const isAuto = it.dataset.name === 'auto';
+      const ok = isAuto || !q || it.dataset.name.includes(q);
+      it.hidden = !ok;
+      if (ok && !isAuto) shown++;
+    }
+    empty.hidden = shown > 0;
+  });
+}
+
+// ---------- colour: presets, a saturation/brightness rectangle and a hue slider ----------
+
+const hexToRgb = (hex) => {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+const rgbToHex = ([r, g, b]) => `#${[r, g, b].map((x) => Math.round(x).toString(16).padStart(2, '0')).join('')}`;
+
+function rgbToHsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return [h, max ? d / max : 0, max];
+}
+
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
+    : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+}
+
+function colorPicker(selected = COLORS[0]) {
+  return `
+    <div class="cpick" data-color-picker>
+      <input type="hidden" name="color" value="${esc(selected)}">
+      <div class="sv" data-sv><span class="sv-dot" data-dot></span></div>
+      <input class="hue" type="range" min="0" max="360" step="1" data-hue aria-label="Hue">
+      <div class="cpick-row">
+        <div class="sw-row">${COLORS.map((c) => `
+          <button type="button" class="sw" data-pick="${c}" style="--c:${c}" aria-label="Use ${c}"></button>`).join('')}</div>
+        <div class="cpick-now"><span class="cpick-preview" data-preview></span><code data-hex></code></div>
+      </div>
+    </div>`;
+}
+
+function wireColorPicker(root) {
+  const el = root.querySelector('[data-color-picker]');
+  if (!el) return;
+  const input = el.querySelector('input[name="color"]');
+  const sv = el.querySelector('[data-sv]');
+  const dot = el.querySelector('[data-dot]');
+  const hue = el.querySelector('[data-hue]');
+  const preview = el.querySelector('[data-preview]');
+  const hex = el.querySelector('[data-hex]');
+  const clamp = (n) => Math.min(1, Math.max(0, n));
+  let [h, s, v] = rgbToHsv(...hexToRgb(input.value));
+
+  function paint() {
+    const value = rgbToHex(hsvToRgb(h, s, v));
+    input.value = value;
+    sv.style.setProperty('--h', Math.round(h));
+    dot.style.left = `${s * 100}%`;
+    dot.style.top = `${(1 - v) * 100}%`;
+    dot.style.background = value;
+    hue.value = Math.round(h);
+    preview.style.background = value;
+    hex.textContent = value.toUpperCase();
+  }
+
+  const moveIn = (e) => {
+    const r = sv.getBoundingClientRect();
+    s = clamp((e.clientX - r.left) / r.width);
+    v = clamp(1 - (e.clientY - r.top) / r.height);
+    paint();
+  };
+  sv.addEventListener('pointerdown', (e) => { sv.setPointerCapture(e.pointerId); moveIn(e); });
+  sv.addEventListener('pointermove', (e) => { if (sv.hasPointerCapture(e.pointerId)) moveIn(e); });
+  hue.addEventListener('input', () => { h = Number(hue.value); paint(); });
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pick]');
+    if (!b) return;
+    [h, s, v] = rgbToHsv(...hexToRgb(b.dataset.pick));
+    paint();
+  });
+  paint();
 }
 
 // ---------- rail (floating left sidebar) ----------
@@ -258,7 +395,7 @@ function viewHome() {
     <div class="empty">
       <div class="empty-orb">${icon('sprout')}</div>
       <h2>Start your first journey</h2>
-      <p class="muted">Pick a habit to build over 66 days, or a sankalpa with a length of your own.</p>
+      <p class="muted">Build a habit over 66 days, keep a sankalpa for your own number of days, or set a SMART goal with a deadline.</p>
       <button class="btn primary" data-action="new">${icon('plus')}New journey</button>
     </div>` : `
     <section class="block">
@@ -526,8 +663,9 @@ function openCreate() {
           ${icon('repeat')}<strong>Habit</strong><small>66 days</small></label>
         <label class="type-card"><input type="radio" name="type" value="sankalpa">
           ${icon('scroll')}<strong>Sankalpa</strong><small>Your days, no misses</small></label>
-        <label class="type-card"><input type="radio" name="type" value="smart">
-          ${icon('target')}<strong>SMART</strong><small>Goal with a deadline</small></label>
+        <label class="type-card wide"><input type="radio" name="type" value="smart">
+          ${icon('target')}<strong>SMART goal</strong>
+          <span class="smart-chips"><span>Specific</span><span>Measurable</span><span>Actionable</span><span>Realistic</span><span>Time-bound</span></span></label>
       </div>
       <label class="field"><span data-title-label>Title</span>
         <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" required autocomplete="off"></label>
@@ -545,7 +683,7 @@ function openCreate() {
       </div>
       <label class="field"><span>Why (optional)</span>
         <textarea name="why" rows="2" maxlength="500" placeholder="The reason this matters to you"></textarea></label>
-      <p class="muted form-hint">${icon('wand-sparkles')} The icon is picked for you from your title. You can change it later from Edit.</p>
+      <div class="field"><span>Icon</span>${iconPicker('', { auto: true })}</div>
       <div class="field"><span>Color</span>${colorPicker(COLORS[0])}</div>
       <p class="error" data-error hidden></p>
     </form>`;
@@ -585,6 +723,8 @@ function openCreate() {
           errBox.hidden = false;
         }
       });
+      wireIconPicker(w);
+      wireColorPicker(w);
       setTimeout(() => form.querySelector('[name="title"]').focus(), 60);
     },
   });
@@ -671,6 +811,8 @@ function openGoalSettings(g) {
     onMount: (w, close) => {
       const form = w.querySelector('#edit-form');
       const errBox = w.querySelector('[data-error]');
+      wireIconPicker(w);
+      wireColorPicker(w);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const fd = new FormData(form);
@@ -680,8 +822,8 @@ function openGoalSettings(g) {
           const fields = {
             title: title.slice(0, 80),
             why: String(fd.get('why') || '').trim().slice(0, 500),
-            icon: fd.get('icon'),
-            color: fd.get('color'),
+            icon: fd.get('icon') || g.icon,
+            color: fd.get('color') || g.color,
           };
           if (startEditable) fields.attemptStart = L.normalizeStartDate(fd.get('startDate'));
           if (g.type === 'smart') {
@@ -747,7 +889,7 @@ function openAccount() {
       </div>
       <div class="menu">
         <button class="menu-item" data-action="export">${icon('download')}<div><strong>Export my data</strong><small class="muted">Download everything as a JSON backup</small></div></button>
-        <button class="menu-item danger-text" data-action="delete-all">${icon('trash-2')}<div><strong>Delete all journeys</strong><small class="muted">Permanently removes every habit and sankalpa</small></div></button>
+        <button class="menu-item danger-text" data-action="delete-all">${icon('trash-2')}<div><strong>Delete all journeys</strong><small class="muted">Permanently removes every habit, sankalpa and SMART goal</small></div></button>
         <button class="menu-item danger-text" data-action="signout">${icon('log-out')}<div><strong>Sign out</strong><small class="muted">Your data stays safe in the cloud</small></div></button>
       </div>`,
   });
@@ -846,7 +988,7 @@ function onModalRootClick(e) {
 async function deleteAll() {
   const ok = await confirmDialog({
     title: 'Delete all journeys?',
-    message: 'Every habit and sankalpa, with all of its history, will be permanently deleted. This cannot be undone.',
+    message: 'Every habit, sankalpa and SMART goal, with all of its history, will be permanently deleted. This cannot be undone.',
     confirmLabel: 'Delete everything',
     danger: true,
   });
