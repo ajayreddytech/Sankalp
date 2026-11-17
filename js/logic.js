@@ -70,7 +70,23 @@ export function suggestIcon(title, type = 'habit') {
 
 // ---------- goal creation ----------
 
-export function newGoalData({ type, title, why = '', days, icon, color, now = new Date() }) {
+/**
+ * Validates a "YYYY-MM-DD" start date from a form. Empty means today.
+ * Returns the cleaned string or throws a user-facing error.
+ */
+export function normalizeStartDate(value, now = new Date()) {
+  const s = String(value ?? '').trim();
+  if (!s) return todayStr(now);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error('Pick a valid start date.');
+  const [y, m, d] = s.split('-').map(Number);
+  const real = new Date(Date.UTC(y, m - 1, d));
+  if (real.getUTCFullYear() !== y || real.getUTCMonth() !== m - 1 || real.getUTCDate() !== d) {
+    throw new Error('Pick a valid start date.');
+  }
+  return s;
+}
+
+export function newGoalData({ type, title, why = '', days, icon, color, startDate, now = new Date() }) {
   const clean = String(title || '').trim();
   if (!clean) throw new Error('Give your habit or sankalpa a title.');
   if (clean.length > 80) throw new Error('Title must be 80 characters or fewer.');
@@ -84,7 +100,7 @@ export function newGoalData({ type, title, why = '', days, icon, color, now = ne
     }
   }
   const iso = now.toISOString();
-  const today = todayStr(now);
+  const start = normalizeStartDate(startDate, now);
   return {
     schemaVersion: 1,
     type,
@@ -95,7 +111,7 @@ export function newGoalData({ type, title, why = '', days, icon, color, now = ne
     color: color || '#8b5cf6',
     status: 'active',
     attempt: 1,
-    attemptStart: today,
+    attemptStart: start,
     checkins: {},          // { "YYYY-MM-DD": "done" | "exception" } for the current attempt
     history: [],           // archived attempts: failed / abandoned (never deleted)
     createdAt: iso,

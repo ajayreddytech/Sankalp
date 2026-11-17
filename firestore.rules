@@ -8,12 +8,12 @@ service cloud.firestore {
 
       match /goals/{goalId} {
         allow read: if request.auth != null && request.auth.uid == uid;
-        // Goals are never deleted from the app. Writes must keep a valid schema version.
+        // Writes must keep a valid schema version. The owner may delete their own journeys.
         allow create, update: if request.auth != null && request.auth.uid == uid
           && request.resource.data.schemaVersion == 1
           && request.resource.data.title is string
           && request.resource.data.title.size() <= 80;
-        allow delete: if false;
+        allow delete: if request.auth != null && request.auth.uid == uid;
       }
     }
 

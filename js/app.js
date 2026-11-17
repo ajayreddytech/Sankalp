@@ -164,7 +164,6 @@ function renderRail() {
       ${icon(g.icon)}
     </a>`).join('');
   $('#rail').innerHTML = `
-    <div class="rail-logo" data-tip="SANKALP">${icon('sparkles')}</div>
     <a class="${cls('home')}" href="#/home" data-tip="Home" aria-label="Home">${icon('house')}</a>
     <div class="rail-goals">${goalItems}</div>
     <div class="rail-spacer"></div>
@@ -485,6 +484,8 @@ function openCreate() {
         <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" required autocomplete="off"></label>
       <label class="field hidden" data-days-field><span>Days</span>
         <input name="days" type="number" min="1" max="365" inputmode="numeric" placeholder="e.g. 30"></label>
+      <label class="field"><span>Start date</span>
+        <input name="startDate" type="date" value="${L.todayStr()}" required></label>
       <label class="field"><span>Why (optional)</span>
         <textarea name="why" rows="2" maxlength="500" placeholder="The reason this matters to you"></textarea></label>
       <p class="muted form-hint">${icon('wand-sparkles')} The icon is picked for you from your title. You can change it later from Edit.</p>
@@ -516,6 +517,7 @@ function openCreate() {
             title: fd.get('title'),
             why: fd.get('why'),
             days: fd.get('days'),
+            startDate: fd.get('startDate'),
             icon: fd.get('icon'),
             color: fd.get('color'),
           });
@@ -534,10 +536,14 @@ function openCreate() {
 }
 
 function openGoalSettings(g) {
+  // The start date can change only before the first check-in, so the grid never shifts under existing days.
+  const startEditable = g.status === 'active' && Object.keys(g.checkins || {}).length === 0;
   const body = `
     <form id="edit-form" class="form" novalidate>
       <label class="field"><span>Title</span>
         <input name="title" maxlength="80" required value="${esc(g.title)}"></label>
+      <label class="field"><span>Start date${startEditable ? '' : ' (locked after the first check-in)'}</span>
+        <input name="startDate" type="date" value="${esc(g.attemptStart)}" ${startEditable ? '' : 'disabled'}></label>
       <label class="field"><span>Why</span>
         <textarea name="why" rows="2" maxlength="500">${esc(g.why)}</textarea></label>
       <div class="field"><span>Icon</span>${iconPicker(g.icon)}</div>
@@ -546,6 +552,10 @@ function openGoalSettings(g) {
       <div class="danger-zone">
         <div><strong>Abandon this journey</strong><small class="muted">It moves to Not accomplished. Nothing is deleted.</small></div>
         <button type="button" class="btn danger sm" data-abandon>Abandon</button>
+      </div>
+      <div class="danger-zone">
+        <div><strong>Delete this journey</strong><small class="muted">Removes it and its whole history permanently.</small></div>
+        <button type="button" class="btn danger sm" data-delete>Delete</button>
       </div>
     </form>`;
   openModal({
@@ -561,17 +571,36 @@ function openGoalSettings(g) {
         const title = String(fd.get('title') || '').trim();
         if (!title) { errBox.textContent = 'Title cannot be empty.'; errBox.hidden = false; return; }
         try {
-          await db.updateGoalDetails(state.user.uid, g.id, {
+          const fields = {
             title: title.slice(0, 80),
             why: String(fd.get('why') || '').trim().slice(0, 500),
             icon: fd.get('icon'),
             color: fd.get('color'),
-          });
+          };
+          if (startEditable) fields.attemptStart = L.normalizeStartDate(fd.get('startDate'));
+          await db.updateGoalDetails(state.user.uid, g.id, fields);
           close();
           toast('Saved', 'success');
         } catch (err) {
           errBox.textContent = err.message;
           errBox.hidden = false;
+        }
+      });
+      w.querySelector('[data-delete]').addEventListener('click', async () => {
+        const ok = await confirmDialog({
+          title: 'Delete this journey?',
+          message: `"${esc(g.title)}" and its whole history will be permanently deleted. This cannot be undone.`,
+          confirmLabel: 'Delete forever',
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await db.deleteGoal(state.user.uid, g.id);
+          close();
+          location.hash = '#/home';
+          toast('Journey deleted', 'info');
+        } catch (err) {
+          toast(err.message, 'error');
         }
       });
       w.querySelector('[data-abandon]').addEventListener('click', async () => {
@@ -606,6 +635,7 @@ function openAccount() {
       </div>
       <div class="menu">
         <button class="menu-item" data-action="export">${icon('download')}<div><strong>Export my data</strong><small class="muted">Download everything as a JSON backup</small></div></button>
+        <button class="menu-item danger-text" data-action="delete-all">${icon('trash-2')}<div><strong>Delete all journeys</strong><small class="muted">Permanently removes every habit and sankalpa</small></div></button>
         <button class="menu-item danger-text" data-action="signout">${icon('log-out')}<div><strong>Sign out</strong><small class="muted">Your data stays safe in the cloud</small></div></button>
       </div>`,
   });
@@ -697,6 +727,25 @@ function onModalRootClick(e) {
     db.logout().then(() => toast('Signed out'));
   }
   if (act.dataset.action === 'export') exportData();
+  if (act.dataset.action === 'delete-all') deleteAll();
+}
+
+async function deleteAll() {
+  const ok = await confirmDialog({
+    title: 'Delete all journeys?',
+    message: 'Every habit and sankalpa, with all of its history, will be permanently deleted. This cannot be undone.',
+    confirmLabel: 'Delete everything',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const count = await db.deleteAllGoals(state.user.uid);
+    document.querySelectorAll('.modal-backdrop').forEach((m) => m.remove());
+    location.hash = '#/home';
+    toast(`Deleted ${count} journey${count === 1 ? '' : 's'}`, 'info');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 // ---------- render loop ----------

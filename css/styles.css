@@ -91,12 +91,6 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
 }
 @keyframes rail-in { from { transform: translate(-120%, -50%); opacity: 0; } to { transform: translate(0, -50%); opacity: 1; } }
 
-.rail-logo {
-  width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff;
-  box-shadow: 0 8px 24px -8px rgba(139, 92, 246, 0.8);
-  margin-bottom: 4px;
-}
 .rail-item {
   position: relative; width: 44px; height: 44px; border-radius: 16px; display: grid; place-items: center;
   background: transparent; border: 0; color: var(--muted);
@@ -415,7 +409,7 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
   display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
   background: rgba(22, 22, 34, 0.96); border: 1px solid var(--line-strong);
   box-shadow: 0 22px 50px -16px rgba(0, 0, 0, 0.9);
-  opacity: 0; pointer-events: none; transform: translate(-50%, 8px) scale(0.94); transform-origin: bottom center;
+  opacity: 0; pointer-events: none; transform: translate(var(--tx, -50%), 8px) scale(0.94); transform-origin: bottom center;
   transition: opacity 0.22s var(--ease), transform 0.22s var(--ease);
 }
 .cell-actions::after {
@@ -425,7 +419,7 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
 .cell.is-active:hover .cell-actions,
 .cell.is-active:focus-within .cell-actions,
 .cell.is-active.open .cell-actions {
-  opacity: 1; pointer-events: auto; transform: translate(-50%, 0) scale(1);
+  opacity: 1; pointer-events: auto; transform: translate(var(--tx, -50%), 0) scale(1);
 }
 .cell-actions button {
   width: 52px; height: 40px; border-radius: 13px; border: 1px solid transparent; display: grid; place-items: center;
@@ -547,7 +541,7 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
 .form { display: block; }
 .form .field { display: grid; gap: 8px; margin-bottom: 18px; }
 .form .field > span { font-size: 13px; color: var(--muted); font-weight: 600; }
-.form input[type="text"], .form input:not([type]), .form input[type="number"], .form textarea {
+.form input[type="text"], .form input:not([type]), .form input[type="number"], .form input[type="date"], .form textarea {
   width: 100%; background: #0b0b13; border: 1px solid var(--line-strong); border-radius: 14px; padding: 13px 14px;
   font-size: 16px; transition: border-color 0.2s, box-shadow 0.2s; resize: vertical;
 }
@@ -639,10 +633,6 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
 
 /* ---------- small screens: keep the rail, tighten everything ---------- */
 @media (max-width: 720px) {
-  .rail { width: 56px; border-radius: 22px; gap: 8px; top: calc(8px + var(--safe-top)); bottom: calc(8px + var(--safe-bottom)); left: calc(8px + var(--safe-left)); }
-  .rail-item { width: 40px; height: 40px; border-radius: 14px; }
-  .rail-logo { width: 36px; height: 36px; border-radius: 12px; }
-  .view { margin-left: calc(74px + var(--safe-left)); padding: calc(18px + var(--safe-top)) 14px calc(110px + var(--safe-bottom)); }
   .hero { margin-bottom: 18px; }
   .overview { grid-template-columns: 1fr; justify-items: center; }
   .kpis { width: 100%; }
@@ -660,7 +650,6 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
   .acc-grid { grid-template-columns: 1fr; }
   .segmented { width: 100%; }
   .segmented button { flex: 1; justify-content: center; padding: 0 10px; font-size: 14px; }
-  .fab { right: calc(14px + var(--safe-right)); bottom: calc(16px + var(--safe-bottom)); height: 52px; }
   [data-tip]::after { display: none; }
 }
 
@@ -750,13 +739,88 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
 .attempt { flex-direction: column; text-align: center; }
 .attempt-n { margin: 0 auto; }
 
-/* compact floating rail on small screens */
+/* ==========================================================================
+   v3 responsive. Desktop and tablet keep the side rail. Phones move the rail to
+   a bottom bar that sits under the thumb, and every screen adapts to its width.
+   ========================================================================== */
+@keyframes rail-up {
+  from { transform: translate(-50%, 160%); opacity: 0; }
+  to { transform: translate(-50%, 0); opacity: 1; }
+}
+
+/* tablets (portrait and small landscape): side rail stays, grids and gutters tighten */
+@media (min-width: 721px) and (max-width: 1100px) {
+  :root { --rail-space: 84px; }
+  .page-in-target { max-width: 900px; }
+  .journey { gap: clamp(8px, 1.2vw, 12px); }
+}
+
+/* phones */
 @media (max-width: 720px) {
-  :root { --rail-space: 74px; }
-  .rail { left: calc(8px + var(--safe-left)); width: 56px; max-height: calc(100dvh - 16px - var(--safe-top) - var(--safe-bottom)); }
-  .view { padding-top: calc(18px + var(--safe-top)); padding-bottom: calc(110px + var(--safe-bottom)); }
+  :root { --rail-space: 0px; --bar-h: 68px; }
+
+  /* bottom navigation bar: Home, your journeys (scrollable), Accomplishments, Account */
+  .rail {
+    top: auto; bottom: calc(10px + var(--safe-bottom)); left: 50%; right: auto;
+    width: min(calc(100vw - 20px), 560px); height: auto; max-height: none;
+    transform: translateX(-50%);
+    flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 6px;
+    padding: 8px 10px; border-radius: 26px; overflow: visible;
+    animation: rail-up 0.6s var(--ease) both;
+  }
+  .rail-spacer { display: none; }
+  .rail > .rail-item { flex-shrink: 0; width: 46px; height: 46px; }
+  .rail-goals {
+    flex: 1 1 auto; min-width: 0; flex-direction: row; justify-content: flex-start; gap: 6px;
+    margin: -4px 0 -12px; padding: 4px 4px 12px; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; scroll-snap-type: x proximity;
+  }
+  .rail-goals::-webkit-scrollbar { display: none; }
+  .rail-goals::before { display: none; }
+  .rail-goals > a { flex-shrink: 0; scroll-snap-align: center; }
+  .rail-item.active::before {
+    left: 50%; top: auto; bottom: -7px; width: 18px; height: 4px; transform: translateX(-50%);
+  }
+  [data-tip]::after { display: none; }
+
+  /* content: full width with thumb-friendly gutters, clear of the bar */
+  .view {
+    padding: calc(18px + var(--safe-top)) max(16px, var(--safe-right)) calc(var(--bar-h) + 56px + var(--safe-bottom)) max(16px, var(--safe-left));
+  }
+  .hero { margin-bottom: 18px; }
+  .overview { grid-template-columns: 1fr; justify-items: center; }
+  .kpis { grid-template-columns: 1fr 1fr; width: 100%; max-width: none; }
+  .ring { width: 132px; height: 132px; }
+  .journey { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 9px; padding: 12px; border-radius: 22px; }
+  .checkin-panel { padding: 16px; }
+  .answer-row { width: 100%; }
+  .answer-row .btn { flex: 1; min-width: 0; }
+  .due-row { flex-wrap: wrap; }
+  .due-actions { width: 100%; }
+  .due-actions .btn { flex: 1; max-width: none; }
+  .goal-grid { grid-template-columns: 1fr; }
+  .acc-grid { grid-template-columns: 1fr; }
+  .segmented { width: 100%; }
+  .segmented button { flex: 1; justify-content: center; padding: 0 10px; font-size: 14px; }
+
+  /* popovers on the first and last columns stay inside the screen */
+  .cell-actions { min-width: 150px; }
+  .cell-actions button { width: 48px; }
+  .journey .cell:nth-child(7n+1) .cell-actions { left: 0; right: auto; --tx: 0px; transform-origin: bottom left; }
+  .journey .cell:nth-child(7n+1) .cell-actions::after { left: 13px; transform: none; }
+  .journey .cell:nth-child(7n) .cell-actions { left: auto; right: 0; --tx: 0px; transform-origin: bottom right; }
+  .journey .cell:nth-child(7n) .cell-actions::after { left: auto; right: 13px; transform: none; }
+
+  .fab { right: max(16px, var(--safe-right)); bottom: calc(var(--bar-h) + 22px + var(--safe-bottom)); height: 52px; }
+  .toast-root { bottom: calc(var(--bar-h) + 16px + var(--safe-bottom)); }
+  .sheet { max-height: 92dvh; }
+}
+
+@media (max-width: 380px) {
+  .journey { gap: 6px; padding: 10px; }
+  .cell { font-size: 10px; }
   .kpis { grid-template-columns: 1fr 1fr; }
-  .due-actions .btn { max-width: none; }
+  .rail > .rail-item { width: 42px; height: 42px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

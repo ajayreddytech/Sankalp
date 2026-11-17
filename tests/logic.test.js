@@ -155,3 +155,13 @@ test('date arithmetic is timezone-safe', () => {
   assert.equal(addDays('2026-02-28', 1), '2026-03-01');
   assert.equal(diffDays('2026-03-01', '2026-02-28'), -1);
 });
+
+test('a chosen start date becomes the first day; blank means today', async () => {
+  const { normalizeStartDate } = await import('../js/logic.js');
+  const now = new Date(2026, 0, 10, 9, 0, 0);
+  assert.equal(newGoalData({ type: 'habit', title: 'Read', startDate: '2025-12-01', now }).attemptStart, '2025-12-01');
+  assert.equal(newGoalData({ type: 'habit', title: 'Read', startDate: '', now }).attemptStart, '2026-01-10');
+  assert.equal(normalizeStartDate('2026-02-28', now), '2026-02-28');
+  assert.throws(() => normalizeStartDate('2026-02-30', now));
+  assert.throws(() => normalizeStartDate('10/01/2026', now));
+});

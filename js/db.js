@@ -8,7 +8,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js';
 import {
   getFirestore, collection, doc, setDoc, updateDoc, getDocs, onSnapshot, query, orderBy,
-  runTransaction,
+  runTransaction, deleteDoc, writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js';
 import { firebaseConfig } from './config.js';
 import { applyCheckin, applyAbandon } from './logic.js';
@@ -115,6 +115,23 @@ export async function abandon(uid, goalId) {
     const patch = applyAbandon(goal, new Date());
     tx.update(ref, patch);
   });
+}
+
+// Permanently deletes one journey and its history. Only the owner can do this (see firestore.rules).
+export async function deleteGoal(uid, goalId) {
+  await deleteDoc(doc(goalsCol(uid), goalId));
+}
+
+// Permanently deletes every journey for this user. Batches stay under Firestore's 500-write limit.
+export async function deleteAllGoals(uid) {
+  const snap = await getDocs(goalsCol(uid));
+  const refs = snap.docs.map((d) => d.ref);
+  for (let i = 0; i < refs.length; i += 400) {
+    const batch = writeBatch(db);
+    refs.slice(i, i + 400).forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
+  return refs.length;
 }
 
 // Full export of the user's data, for backup before any app update.
