@@ -923,6 +923,7 @@ function openAccount() {
       </div>
       <div class="menu">
         <button class="menu-item" data-action="export">${icon('download')}<div><strong>Export my data</strong><small class="muted">Download everything as a JSON backup</small></div></button>
+        <button class="menu-item danger-text" data-action="reset-account">${icon('rotate-ccw')}<div><strong>Reset account</strong><small class="muted">Deletes every journey and all your data. Your sign-in stays.</small></div></button>
         <button class="menu-item danger-text" data-action="signout">${icon('log-out')}<div><strong>Sign out</strong><small class="muted">Your data stays safe in the cloud</small></div></button>
       </div>`,
   });
@@ -1015,6 +1016,25 @@ function onModalRootClick(e) {
     db.logout().then(() => toast('Signed out'));
   }
   if (act.dataset.action === 'export') exportData();
+  if (act.dataset.action === 'reset-account') resetAccount();
+}
+
+async function resetAccount() {
+  const ok = await confirmDialog({
+    title: 'Reset your account?',
+    message: 'Every habit, sankalpa and SMART goal, all history, and your profile data will be permanently deleted. Your account becomes brand new. This cannot be undone.',
+    confirmLabel: 'Reset everything',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const count = await db.resetAccount(state.user.uid);
+    document.querySelectorAll('.modal-backdrop').forEach((m) => m.remove());
+    location.hash = '#/home';
+    toast(`Account reset. ${count} journey${count === 1 ? '' : 's'} deleted.`, 'info');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 // ---------- render loop ----------

@@ -8,7 +8,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js';
 import {
   getFirestore, collection, doc, setDoc, updateDoc, getDocs, onSnapshot, query, orderBy,
-  runTransaction,
+  runTransaction, deleteDoc, writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js';
 import { firebaseConfig } from './config.js';
 import { applyCheckin, applyAbandon } from './logic.js';
@@ -125,4 +125,24 @@ export async function exportAll(uid) {
     schemaVersion: 1,
     goals: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
   };
+}
+
+// Deletes every journey in batches (Firestore allows 500 writes per batch).
+export async function deleteAllGoals(uid) {
+  const snap = await getDocs(goalsCol(uid));
+  const refs = snap.docs.map((d) => d.ref);
+  for (let i = 0; i < refs.length; i += 400) {
+    const batch = writeBatch(db);
+    refs.slice(i, i + 400).forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
+  return refs.length;
+}
+
+// Resets the account to brand new: every journey and the profile record are deleted.
+// The Google sign-in itself stays, so the next visit starts from an empty account.
+export async function resetAccount(uid) {
+  const count = await deleteAllGoals(uid);
+  await deleteDoc(doc(db, 'users', uid));
+  return count;
 }
