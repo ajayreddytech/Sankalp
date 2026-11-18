@@ -11,7 +11,7 @@ import {
   runTransaction, deleteDoc, writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js';
 import { firebaseConfig } from './config.js';
-import { applyCheckin, applyAbandon } from './logic.js';
+import { applyCheckin, applyAbandon, applySmartLog } from './logic.js';
 
 export const configured = !firebaseConfig.apiKey.startsWith('YOUR_');
 
@@ -104,6 +104,26 @@ export async function checkIn(uid, goalId, date, answer) {
     tx.update(ref, result.patch);
     return result;
   });
+}
+
+// Saves the numbers for a SMART goal. entries: [{ index, date, value }].
+export async function saveSmartLog(uid, goalId, entries) {
+  const ref = doc(goalsCol(uid), goalId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Journey not found.');
+    const goal = { id: snap.id, ...snap.data() };
+    const result = applySmartLog(goal, entries, new Date());
+    tx.update(ref, result.patch);
+    return result;
+  });
+}
+
+// Writes the home-screen order: ids[0] is the first journey shown. One batch, so all positions stay consistent.
+export async function saveOrder(uid, ids) {
+  const batch = writeBatch(db);
+  ids.forEach((id, i) => batch.update(doc(goalsCol(uid), id), { order: i }));
+  await batch.commit();
 }
 
 export async function abandon(uid, goalId) {

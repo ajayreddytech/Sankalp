@@ -27,12 +27,21 @@ const ICONS = [
   'eye', 'glasses', 'feather', 'infinity', 'orbit', 'atom', 'flask-conical', 'microscope', 'telescope',
   'swords', 'shield-half', 'flag', 'bell', 'check-check', 'circle-check', 'repeat', 'rotate-ccw',
 ];
-// Presets for quick picking. Any other colour comes from the rectangle or hue slider.
-const COLORS = [
-  '#8b5cf6', '#6366f1', '#3b82f6', '#0ea5e9', '#22d3ee', '#14b8a6', '#10b981', '#34d399',
-  '#84cc16', '#a3e635', '#eab308', '#fbbf24', '#f59e0b', '#f97316', '#ef4444', '#fb7185',
-  '#e11d48', '#ec4899', '#f472b6', '#d946ef', '#a855f7', '#94a3b8', '#e2e8f0', '#78716c',
+
+// Twenty pastel colours that glow on a dark background. The first one is the default.
+const PASTELS = [
+  { name: 'Mint', hex: '#A8E6CF' }, { name: 'Peach', hex: '#FFD3B6' }, { name: 'Coral', hex: '#FFAAA5' },
+  { name: 'Rose', hex: '#FF8B94' }, { name: 'Seafoam', hex: '#B5EAD7' }, { name: 'Periwinkle', hex: '#C7CEEA' },
+  { name: 'Lime', hex: '#E2F0CB' }, { name: 'Blush', hex: '#F6DFEB' }, { name: 'Spring', hex: '#B4F8C8' },
+  { name: 'Honey', hex: '#FFD98E' }, { name: 'Aqua', hex: '#A0E7E5' }, { name: 'Flamingo', hex: '#FFAEBC' },
+  { name: 'Lavender', hex: '#DCD3FF' }, { name: 'Sky', hex: '#AFCBFF' }, { name: 'Orchid', hex: '#F3C4FB' },
+  { name: 'Butter', hex: '#FFF1A8' }, { name: 'Lilac', hex: '#C5A3FF' }, { name: 'Teal', hex: '#9ED8DB' },
+  { name: 'Bubblegum', hex: '#FFB3DE' }, { name: 'Apricot', hex: '#F9D5A7' },
 ];
+
+const TYPE_PLURAL = { habit: 'Habits', sankalpa: 'Sankalpas', smart: 'SMART goals' };
+const TYPE_ICON = { habit: 'repeat', sankalpa: 'scroll', smart: 'target' };
+const OUTCOME_LABEL = { failed: 'Not kept', abandoned: 'Abandoned' };
 
 const state = {
   authReady: false,
@@ -41,6 +50,12 @@ const state = {
   goalsReady: false,
   accTab: 'accomplished',
   lastRouteKey: null,
+  reorder: false,
+  dragging: false,
+  renderPending: false,
+  drafts: {},        // unsaved SMART numbers, keyed "goalId|planIndex|date", kept across re-renders
+  loginError: '',
+  pickDay: {},       // which finished day a SMART goal's log is showing, by goal id
 };
 let unsubscribeGoals = null;
 
@@ -59,8 +74,15 @@ function fmtDate(s) {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// Whole numbers stay whole; decimals show one place (1.5, 0.3).
+const fmtNum = (n) => {
+  const v = Number(n) || 0;
+  return Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10);
+};
+
 const typeName = (g) => L.TYPE_LABEL[g.type] || 'Habit';
 const keepPhrase = (g) => ({ habit: 'keep this habit', sankalpa: 'keep this sankalpa', smart: 'stick to this goal' })[g.type] || 'keep this habit';
+const sortedActive = () => L.sortByOrder(state.goals.filter((g) => g.status === 'active'));
 
 function route() {
   const [name = 'home', id = ''] = location.hash.replace(/^#\/?/, '').split('/');
@@ -162,153 +184,234 @@ function celebrate(title) {
   setTimeout(dismiss, 6000);
 }
 
-// ---------- shared pickers ----------
+// ---------- dropdowns: icon and colour pickers ----------
+// A dropdown opens on press. It closes when an option is picked, on Escape, when focus moves
+// to another field, or when the user taps anywhere else.
 
-// Searchable icon grid. With auto: true, an "Auto" choice (empty value) is first and selected by default.
-function iconPicker(selected = '', { auto = false } = {}) {
-  const names = ICONS.includes(selected) || !selected ? ICONS : [selected, ...ICONS];
-  const autoOpt = auto ? `
-    <label class="pick auto" data-name="auto">
-      <input type="radio" name="icon" value="" checked>
-      <span>${icon('wand-sparkles')}<em>Auto, from your title</em></span>
-    </label>` : '';
+function dropdown({ kind, name, value, valueHTML, optionsHTML, search = false }) {
   return `
-    <div class="ipick" data-icon-picker>
-      <input class="ipick-search" type="search" placeholder="Search icons, e.g. book, heart, moon" aria-label="Search icons" autocomplete="off">
-      <div class="picker-grid icons">${autoOpt}${names.map((name) => `
-        <label class="pick" data-name="${esc(name)}" title="${esc(name)}">
-          <input type="radio" name="icon" value="${esc(name)}" ${!auto && name === selected ? 'checked' : ''}>
-          <span>${icon(name)}</span>
-        </label>`).join('')}</div>
-      <p class="muted ipick-empty" hidden>No icon matches that search.</p>
-    </div>`;
-}
-
-function wireIconPicker(root) {
-  const el = root.querySelector('[data-icon-picker]');
-  if (!el) return;
-  const search = el.querySelector('.ipick-search');
-  const items = [...el.querySelectorAll('.pick')];
-  const empty = el.querySelector('.ipick-empty');
-  search.addEventListener('input', () => {
-    const q = search.value.trim().toLowerCase().replace(/\s+/g, '-');
-    let shown = 0;
-    for (const it of items) {
-      const isAuto = it.dataset.name === 'auto';
-      const ok = isAuto || !q || it.dataset.name.includes(q);
-      it.hidden = !ok;
-      if (ok && !isAuto) shown++;
-    }
-    empty.hidden = shown > 0;
-  });
-}
-
-// ---------- colour: presets, a saturation/brightness rectangle and a hue slider ----------
-
-const hexToRgb = (hex) => {
-  const n = parseInt(hex.slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-};
-const rgbToHex = ([r, g, b]) => `#${[r, g, b].map((x) => Math.round(x).toString(16).padStart(2, '0')).join('')}`;
-
-function rgbToHsv(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const d = max - min;
-  let h = 0;
-  if (d) {
-    if (max === r) h = ((g - b) / d) % 6;
-    else if (max === g) h = (b - r) / d + 2;
-    else h = (r - g) / d + 4;
-    h *= 60;
-    if (h < 0) h += 360;
-  }
-  return [h, max ? d / max : 0, max];
-}
-
-function hsvToRgb(h, s, v) {
-  const c = v * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = v - c;
-  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
-    : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-  return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
-}
-
-function colorPicker(selected = COLORS[0]) {
-  return `
-    <div class="cpick" data-color-picker>
-      <div class="hex-row">
-        <input class="hex-input" data-hex-input type="text" maxlength="7" placeholder="#8B5CF6" spellcheck="false" autocomplete="off" aria-label="Colour code">
-        <span class="cpick-preview" data-preview></span>
+    <div class="dd ${kind}" data-dd>
+      <input type="hidden" name="${name}" value="${esc(value)}">
+      <button type="button" class="dd-trigger" data-dd-toggle aria-haspopup="listbox" aria-expanded="false">
+        <span class="dd-value">${valueHTML}</span>
+        <span class="dd-caret">${icon('chevron-down')}</span>
+      </button>
+      <div class="dd-panel" hidden>
+        ${search ? '<input class="dd-search" type="search" placeholder="Search icons, e.g. book, heart, moon" aria-label="Search icons" autocomplete="off">' : ''}
+        <div class="dd-options" role="listbox">${optionsHTML}</div>
+        ${search ? '<p class="muted dd-empty" hidden>No icon matches that search.</p>' : ''}
       </div>
-      <input type="hidden" name="color" value="${esc(selected)}">
-      <div class="sv" data-sv><span class="sv-dot" data-dot></span></div>
-      <input class="hue" type="range" min="0" max="360" step="1" data-hue aria-label="Hue">
-      <div class="sw-row">${COLORS.map((c) => `
-        <button type="button" class="sw" data-pick="${c}" style="--c:${c}" aria-label="Use ${c}"></button>`).join('')}</div>
     </div>`;
 }
 
-function wireColorPicker(root) {
-  const el = root.querySelector('[data-color-picker]');
-  if (!el) return;
-  const input = el.querySelector('input[name="color"]');
-  const sv = el.querySelector('[data-sv]');
-  const dot = el.querySelector('[data-dot]');
-  const hue = el.querySelector('[data-hue]');
-  const preview = el.querySelector('[data-preview]');
-  const hexIn = el.querySelector('[data-hex-input]');
-  const clamp = (n) => Math.min(1, Math.max(0, n));
-  let [h, s, v] = rgbToHsv(...hexToRgb(input.value));
-
-  function paint() {
-    const value = rgbToHex(hsvToRgb(h, s, v));
-    input.value = value;
-    sv.style.setProperty('--h', Math.round(h));
-    dot.style.left = `${s * 100}%`;
-    dot.style.top = `${(1 - v) * 100}%`;
-    dot.style.background = value;
-    hue.value = Math.round(h);
-    preview.style.background = value;
-    if (document.activeElement !== hexIn) hexIn.value = value.toUpperCase();
-  }
-
-  // Typing a full code (#RGB or #RRGGBB) selects that colour straight away.
-  hexIn.addEventListener('input', () => {
-    const m = hexIn.value.trim().replace(/^#?/, '#').match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-    if (!m) return;
-    const digits = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
-    [h, s, v] = rgbToHsv(...hexToRgb(`#${digits}`));
-    paint();
-  });
-  hexIn.addEventListener('blur', paint);
-
-  const moveIn = (e) => {
-    const r = sv.getBoundingClientRect();
-    s = clamp((e.clientX - r.left) / r.width);
-    v = clamp(1 - (e.clientY - r.top) / r.height);
-    paint();
-  };
-  sv.addEventListener('pointerdown', (e) => { sv.setPointerCapture(e.pointerId); moveIn(e); });
-  sv.addEventListener('pointermove', (e) => { if (sv.hasPointerCapture(e.pointerId)) moveIn(e); });
-  hue.addEventListener('input', () => { h = Number(hue.value); paint(); });
-  el.addEventListener('click', (e) => {
-    if (!e.target.closest('[data-pick]')) return;
-    const b = e.target.closest('[data-pick]');
-    if (!b) return;
-    [h, s, v] = rgbToHsv(...hexToRgb(b.dataset.pick));
-    paint();
-  });
-  paint();
+// Icons: empty value means "Auto, from your title" when auto is true.
+function iconDropdown(selected = '', { auto = false } = {}) {
+  const names = !selected || ICONS.includes(selected) ? ICONS : [selected, ...ICONS];
+  const autoOn = auto && !selected;
+  const autoOpt = auto ? `
+    <button type="button" class="dd-opt wide${autoOn ? ' on' : ''}" data-dd-option data-value="" data-name="auto">
+      <span class="dd-face">${icon('wand-sparkles')}<span class="dd-name">Auto, From Your Title</span></span>
+    </button>` : '';
+  const opts = autoOpt + names.map((name) => `
+    <button type="button" class="dd-opt${name === selected ? ' on' : ''}" data-dd-option data-value="${esc(name)}" data-name="${esc(name)}" title="${esc(name)}">
+      <span class="dd-face">${icon(name)}<span class="dd-name">${esc(name)}</span></span>
+    </button>`).join('');
+  const face = selected
+    ? `<span class="dd-face">${icon(selected)}<span class="dd-name">${esc(selected)}</span></span>`
+    : `<span class="dd-face">${icon('wand-sparkles')}<span class="dd-name">Auto, From Your Title</span></span>`;
+  return dropdown({ kind: 'icons', name: 'icon', value: autoOn ? '' : selected, valueHTML: face, optionsHTML: opts, search: true });
 }
 
-// ---------- rail (floating left sidebar) ----------
+function colorDropdown(selected = PASTELS[0].hex) {
+  const sel = String(selected).toUpperCase();
+  const known = PASTELS.some((p) => p.hex.toUpperCase() === sel);
+  const list = known ? PASTELS : [{ name: 'Current Colour', hex: selected }, ...PASTELS];
+  const current = list.find((p) => p.hex.toUpperCase() === sel) || list[0];
+  const face = (p) => `<span class="dd-face"><i class="dd-dot" style="--c:${p.hex}"></i><span class="dd-name">${esc(p.name)}</span></span>`;
+  const opts = list.map((p) => `
+    <button type="button" class="dd-opt wide${p.hex.toUpperCase() === sel ? ' on' : ''}" data-dd-option data-value="${p.hex}">${face(p)}</button>`).join('');
+  return dropdown({ kind: 'colors', name: 'color', value: current.hex, valueHTML: face(current), optionsHTML: opts });
+}
+
+function wireDropdowns(root) {
+  const setOpen = (dd, open) => {
+    dd.classList.toggle('open', open);
+    dd.querySelector('[data-dd-toggle]').setAttribute('aria-expanded', String(open));
+    dd.querySelector('.dd-panel').hidden = !open;
+  };
+  const closeAll = (except = null) => {
+    root.querySelectorAll('[data-dd].open').forEach((d) => { if (d !== except) setOpen(d, false); });
+  };
+
+  root.addEventListener('click', (e) => {
+    const dd = e.target.closest('[data-dd]');
+    if (dd && e.target.closest('[data-dd-toggle]')) {
+      const open = !dd.classList.contains('open');
+      closeAll(dd);
+      setOpen(dd, open);
+      return;
+    }
+    const opt = e.target.closest('[data-dd-option]');
+    if (opt && dd) {
+      dd.querySelector('input[type="hidden"]').value = opt.dataset.value;
+      dd.querySelector('.dd-value').innerHTML = opt.querySelector('.dd-face').outerHTML;
+      dd.querySelectorAll('[data-dd-option]').forEach((o) => o.classList.toggle('on', o === opt));
+      setOpen(dd, false);
+      dd.querySelector('[data-dd-toggle]').focus({ preventScroll: true });
+      return;
+    }
+    if (!dd) closeAll();
+  });
+
+  // Moving to another field closes the dropdown.
+  root.addEventListener('focusin', (e) => closeAll(e.target.closest('[data-dd]')));
+
+  root.addEventListener('input', (e) => {
+    if (!e.target.matches('.dd-search')) return;
+    const q = e.target.value.trim().toLowerCase().replace(/\s+/g, '-');
+    const panel = e.target.closest('.dd-panel');
+    let shown = 0;
+    panel.querySelectorAll('[data-dd-option]').forEach((o) => {
+      const isAuto = o.dataset.name === 'auto';
+      const ok = isAuto || !q || (o.dataset.name || '').includes(q);
+      o.hidden = !ok;
+      if (ok && !isAuto) shown++;
+    });
+    panel.querySelector('.dd-empty').hidden = shown > 0;
+  });
+
+  root.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const open = root.querySelector('[data-dd].open');
+    if (!open) return;
+    e.stopPropagation();   // Escape closes the dropdown, not the whole dialog
+    setOpen(open, false);
+    open.querySelector('[data-dd-toggle]').focus({ preventScroll: true });
+  });
+}
+
+// ---------- drag and drop reordering (mouse and touch) ----------
+// In reorder mode, press a journey and drag it. The list makes room as it moves, and the page
+// scrolls when the pointer gets close to the top or bottom edge of the screen.
+
+const drag = { pending: null, el: null, ghost: null, x: 0, y: 0, offX: 0, offY: 0, raf: 0 };
+
+function onDragDown(e) {
+  if (!state.reorder || e.button > 0) return;
+  const item = e.target.closest('[data-drag-list] .drag-item');
+  if (!item) return;
+  drag.pending = { item, x: e.clientX, y: e.clientY };
+}
+
+function onDragMove(e) {
+  if (!drag.pending && !drag.el) return;
+  drag.x = e.clientX;
+  drag.y = e.clientY;
+  if (!drag.el) {
+    if (Math.hypot(e.clientX - drag.pending.x, e.clientY - drag.pending.y) < 6) return;
+    startDrag(drag.pending.item, e);
+    drag.pending = null;
+  }
+  moveGhost();
+  placeItem();
+}
+
+function startDrag(item, e) {
+  const r = item.getBoundingClientRect();
+  drag.el = item;
+  drag.offX = e.clientX - r.left;
+  drag.offY = e.clientY - r.top;
+  const ghost = item.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  ghost.style.width = `${r.width}px`;
+  document.body.appendChild(ghost);
+  drag.ghost = ghost;
+  item.classList.add('drag-source');
+  document.body.classList.add('is-dragging');
+  state.dragging = true;
+  drag.raf = requestAnimationFrame(autoScroll);
+}
+
+function moveGhost() {
+  if (!drag.ghost) return;
+  drag.ghost.style.left = `${drag.x - drag.offX}px`;
+  drag.ghost.style.top = `${drag.y - drag.offY}px`;
+}
+
+// Moves the dragged journey to the slot under the pointer, by nearest card and its half.
+function placeItem() {
+  const el = drag.el;
+  if (!el) return;
+  const container = el.parentElement;
+  let best = null;
+  let bestD = Infinity;
+  for (const n of container.querySelectorAll('.drag-item')) {
+    if (n === el) continue;
+    const r = n.getBoundingClientRect();
+    const d = (r.left + r.width / 2 - drag.x) ** 2 + (r.top + r.height / 2 - drag.y) ** 2;
+    if (d < bestD) { bestD = d; best = n; }
+  }
+  if (!best) return;
+  const r = best.getBoundingClientRect();
+  const sameRow = drag.y >= r.top && drag.y <= r.bottom;
+  const before = sameRow ? drag.x < r.left + r.width / 2 : drag.y < r.top + r.height / 2;
+  if (before) {
+    if (best.previousElementSibling !== el) container.insertBefore(el, best);
+  } else if (best.nextElementSibling !== el) {
+    container.insertBefore(el, best.nextElementSibling);
+  }
+}
+
+// Scrolls the page while the pointer rests near the top or bottom edge.
+function autoScroll() {
+  if (!drag.el) return;
+  const edge = 96;
+  const top = 26;
+  const vh = window.innerHeight;
+  let dy = 0;
+  if (drag.y < edge) dy = -Math.min(top, Math.ceil(top * (1 - Math.max(0, drag.y) / edge)));
+  else if (drag.y > vh - edge) dy = Math.min(top, Math.ceil(top * (1 - Math.max(0, vh - drag.y) / edge)));
+  if (dy) {
+    window.scrollBy(0, dy);
+    moveGhost();
+    placeItem();
+  }
+  drag.raf = requestAnimationFrame(autoScroll);
+}
+
+async function endDrag() {
+  if (drag.pending) drag.pending = null;
+  if (!drag.el) return;
+  cancelAnimationFrame(drag.raf);
+  const container = drag.el.parentElement;
+  drag.el.classList.remove('drag-source');
+  drag.ghost?.remove();
+  drag.ghost = null;
+  document.body.classList.remove('is-dragging');
+  const ids = [...container.querySelectorAll('.drag-item')].map((n) => n.dataset.id);
+  drag.el = null;
+  state.dragging = false;
+
+  const current = sortedActive().map((g) => g.id);
+  if (ids.join('|') !== current.join('|')) {
+    const byId = new Map(state.goals.map((g) => [g.id, g]));
+    ids.forEach((id, k) => { const g = byId.get(id); if (g) g.order = k; });
+    render();
+    try {
+      await db.saveOrder(state.user.uid, ids);
+    } catch (err) {
+      toast(err.message || 'Could not save the order.', 'error');
+    }
+  } else {
+    render();
+  }
+}
+
+// ---------- rail (floating left sidebar, bottom bar on phones) ----------
 
 function renderRail() {
   const r = route();
-  const active = state.goals.filter((g) => g.status === 'active');
+  const active = sortedActive();
   const cls = (name, id) => (r.name === name && (!id || r.id === id) ? 'rail-item active' : 'rail-item');
   const goalItems = active.map((g) => `
     <a class="${cls('goal', g.id)} goal-item" href="#/goal/${encodeURIComponent(g.id)}"
@@ -316,11 +419,12 @@ function renderRail() {
       ${icon(g.icon)}
     </a>`).join('');
   $('#rail').innerHTML = `
-    <a class="${cls('home')}" href="#/home" data-tip="Home" aria-label="Home">${icon('house')}</a>
+    <a class="${cls('home')}" href="#/home" data-tip="Check in" aria-label="Check in">${icon('calendar-check')}</a>
+    <a class="${cls('journeys')}" href="#/journeys" data-tip="Your journeys" aria-label="Your journeys">${icon('route')}</a>
     <div class="rail-goals">${goalItems}</div>
     <div class="rail-spacer"></div>
-    <a class="${cls('accomplishments')}" href="#/accomplishments" data-tip="Accomplishments" aria-label="Accomplishments">${icon('trophy')}</a>
-    <button class="rail-item" data-action="account" data-tip="Account" aria-label="Account">${icon('user')}</button>`;
+    <a class="${cls('accomplishments')}" href="#/accomplishments" data-tip="Accomplishments" aria-label="Accomplishments">${icon('medal')}</a>
+    <button class="rail-item" data-action="account" data-tip="Account" aria-label="Account">${icon('circle-user-round')}</button>`;
 }
 
 // ---------- views ----------
@@ -353,85 +457,212 @@ function viewSetup() {
     </section>`;
 }
 
-function goalCard(g, today) {
-  const j = L.journey(g, today);
-  const pct = Math.min(100, Math.round((j.done / g.targetDays) * 100));
+// What every journey card shows, used by both the normal cards and the drag cards.
+function goalInner(g, today) {
   const nxt = L.nextActionText(g, today);
+  let pct;
+  let meta;
+  let foot;
+  if (g.type === 'smart' && g.smart) {
+    const p = L.smartProgress(g, today);
+    pct = Math.round(p.ratio * 100);
+    meta = `SMART goal · ${p.projected.days} days`;
+    foot = `<span>${pct}% of targets</span>`;
+  } else {
+    const j = L.journey(g, today);
+    pct = Math.min(100, Math.round((j.done / g.targetDays) * 100));
+    meta = `${typeName(g)} · ${g.targetDays} days${j.exceptions ? ` · ${j.exceptions} exception${j.exceptions > 1 ? 's' : ''}` : ''}`;
+    foot = `<span>${j.done} / ${g.targetDays}</span>`;
+  }
+  return `
+    <div class="goal-card-top">
+      <div class="goal-icon">${icon(g.icon)}</div>
+      <div class="goal-meta">
+        <h3>${esc(g.title)}</h3>
+        <p>${esc(meta)}</p>
+      </div>
+    </div>
+    <div class="bar"><span style="width:${pct}%"></span></div>
+    <div class="goal-card-foot">
+      ${foot}
+      <span class="chip ${nxt.kind}">${esc(nxt.text)}</span>
+    </div>`;
+}
+
+function goalCard(g, today) {
   return `
     <a class="goal-card" href="#/goal/${encodeURIComponent(g.id)}" style="--c:${g.color}">
-      <div class="goal-card-top">
-        <div class="goal-icon">${icon(g.icon)}</div>
-        <div class="goal-meta">
-          <h3>${esc(g.title)}</h3>
-          <p>${typeName(g)} · ${g.targetDays} days${j.exceptions ? ` · ${j.exceptions} exception${j.exceptions > 1 ? 's' : ''}` : ''}</p>
-        </div>
-      </div>
-      <div class="bar"><span style="width:${pct}%"></span></div>
-      <div class="goal-card-foot">
-        <span>${j.done} / ${g.targetDays}</span>
-        <span class="chip ${nxt.kind}">${esc(nxt.text)}</span>
-      </div>
+      ${goalInner(g, today)}
     </a>`;
 }
 
-function viewHome() {
-  const today = L.todayStr();
-  const active = state.goals.filter((g) => g.status === 'active');
-  const accomplishedCount = L.accomplished(state.goals).length;
-  const dueList = active.filter((g) => {
-    const k = L.nextActionText(g, today).kind;
-    return k === 'today' || k === 'overdue';
-  });
-  const hour = new Date().getHours();
-  const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const name = (state.user.displayName || '').split(' ')[0] || 'there';
+// The reorder list: every journey as a card you can drag. Same order on both screens.
+function dragListHTML(list, today) {
+  return `
+    <div class="goal-grid drag-list" data-drag-list>
+      ${list.map((g) => `<div class="goal-card drag-item" data-id="${esc(g.id)}" style="--c:${g.color}">${goalInner(g, today)}</div>`).join('')}
+    </div>`;
+}
 
-  const checkList = dueList.map((g) => {
+// SMART log for one day: one number box per plan item. Defaults to the open day.
+// A finished day can be picked from the day map and edited; the next day only opens once the open day is met.
+function smartLogHTML(g, today, pick = null) {
+  const p = L.smartProgress(g, today);
+  if (p.phase === 'upcoming') return `<p class="muted log-note">Starts ${fmtDate(g.attemptStart)}. You can log numbers from that day.</p>`;
+  if (!p.items.length) return '<p class="muted log-note">This goal has no plan yet. Add one from Edit.</p>';
+  const usable = pick && pick >= g.attemptStart && pick <= today;
+  const date = usable ? pick : p.openDay;
+  if (!date) return '<p class="muted log-note">Today is complete. The next day unlocks tomorrow.</p>';
+  const isOpen = date === p.openDay;
+  const dayLabel = date === today ? 'Today' : `${isOpen ? 'Pending' : 'Day'} · ${fmtDate(date)}`;
+
+  const valueOf = (it) => state.drafts[`${g.id}|${it.index}|${date}`] ?? g.logs?.[date]?.[it.index];
+  const needs = p.items.filter((it) => {
+    const v = valueOf(it);
+    return v === undefined || v === '' || Number(v) < it.dayTarget;
+  });
+  const needHTML = needs.length
+    ? `<p class="log-need">${icon('circle-alert')}<span>Still needed: ${needs.map((it) => `${esc(it.action)} (${fmtNum(it.dayTarget)})`).join(', ')}</span></p>`
+    : `<p class="log-ok">${icon('circle-check')}<span>This day is met.</span></p>`;
+
+  const rows = p.items.map((it) => {
+    const value = valueOf(it) ?? '';
+    return `
+      <label class="log-row">
+        <span class="log-k"><strong>${esc(it.action)}</strong><small class="muted">Goal ${fmtNum(it.amount)} ${esc(L.periodLabel(it.per))}</small></span>
+        <input type="number" min="0" step="any" inputmode="decimal" placeholder="0" value="${esc(value)}"
+          data-log-index="${it.index}" data-log-date="${date}" aria-label="${esc(it.action)}">
+      </label>`;
+  }).join('');
+
+  return `
+    <form class="smart-log" data-smart-form data-goal="${esc(g.id)}" novalidate>
+      <p class="eyebrow log-day">${dayLabel}</p>
+      ${needHTML}
+      ${rows}
+      <div class="smart-log-foot">
+        <button type="button" class="btn primary sm" data-action="smart-save" data-goal="${esc(g.id)}">${icon('check')}Save numbers</button>
+      </div>
+    </form>`;
+}
+
+// One row of the check-in screen: the controls when a day is due, otherwise a quiet line.
+function checkRowHTML(g, today) {
+  const nxt = L.nextActionText(g, today);
+  const titleLink = (sub) => `
+    <a class="due-title" href="#/goal/${encodeURIComponent(g.id)}">
+      <span class="goal-icon sm">${icon(g.icon)}</span>
+      <span><strong>${esc(g.title)}</strong><small>${esc(sub)}</small></span>
+    </a>`;
+
+  if (g.type === 'smart' && g.smart) {
+    const p = L.smartProgress(g, today);
+    if (p.phase === 'running' && p.openDay && !p.complete) {
+      return `
+        <div class="due-row smart-due" style="--c:${g.color}">
+          ${titleLink(`${nxt.text} · SMART goal`)}
+          ${smartLogHTML(g, today)}
+        </div>`;
+    }
+    return `<div class="due-row idle" style="--c:${g.color}">${titleLink(nxt.text)}</div>`;
+  }
+
+  if (nxt.kind === 'today' || nxt.kind === 'overdue') {
     const j = L.journey(g, today);
     const av = L.exceptionAvailability(g, j.next.date);
     const label = j.next.date === today ? 'Today' : `Pending · ${fmtDate(j.next.date)}`;
     return `
       <div class="due-row" style="--c:${g.color}">
-        <a class="due-title" href="#/goal/${encodeURIComponent(g.id)}">
-          <span class="goal-icon sm">${icon(g.icon)}</span>
-          <span><strong>${esc(g.title)}</strong><small>${esc(label)}</small></span>
-        </a>
+        ${titleLink(label)}
         <div class="due-actions">
           <button class="btn yes sm" data-action="checkin" data-goal="${g.id}" data-date="${j.next.date}" data-answer="yes">${icon('check')}Done</button>
           <button class="btn no sm" data-action="checkin" data-goal="${g.id}" data-date="${j.next.date}" data-answer="no" title="${esc(av.ok ? 'Uses an exception' : 'Restarts the journey')}">${icon('x')}Missed</button>
         </div>
       </div>`;
-  }).join('');
+  }
+  return `<div class="due-row idle" style="--c:${g.color}">${titleLink(nxt.text)}</div>`;
+}
 
-  const body = active.length === 0 ? `
-    <div class="empty">
-      <div class="empty-orb">${icon('sprout')}</div>
-      <h2>Start your first journey</h2>
-      <p class="muted">Build a habit over 66 days, keep a sankalpa for your own number of days, or set a SMART goal with a deadline.</p>
-      <button class="btn primary" data-action="new">${icon('plus')}New journey</button>
-    </div>` : `
-    <section class="block">
-      <div class="block-head"><h2>Check in</h2><span class="muted">${dueList.length ? `${dueList.length} open` : 'All caught up'}</span></div>
-      ${dueList.length ? `<div class="due-list">${checkList}</div>`
-        : `<div class="all-clear">${icon('circle-check')}<span>Nothing waiting. Next days unlock as you check in.</span></div>`}
-    </section>
-    <section class="block">
-      <div class="block-head"><h2>Your journeys</h2></div>
-      <div class="goal-grid">${active.map((g) => goalCard(g, today)).join('')}</div>
-    </section>`;
+function greeting() {
+  const hour = new Date().getHours();
+  return hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : 'Good Evening';
+}
+
+// Screen 1: Check In. Only the journeys that still need a check-in are listed. Done ones leave the list.
+function viewHome() {
+  const today = L.todayStr();
+  const active = sortedActive();
+  const s = L.checkinSummary(state.goals, today);
+  const name = (state.user.displayName || '').split(' ')[0] || 'There';
+  const due = active.filter((g) => L.needsCheckin(g, today));
+
+  const editBtn = active.length > 1 ? `
+    <button class="icon-btn edit-btn reorder-toggle${state.reorder ? ' on' : ''}" data-action="reorder"
+      aria-label="${state.reorder ? 'Finish reordering' : 'Reorder journeys'}" title="${state.reorder ? 'Done' : 'Reorder'}">${icon(state.reorder ? 'check' : 'pencil')}</button>` : '';
+
+  let body;
+  if (!active.length) {
+    body = `
+      <div class="empty">
+        <div class="empty-orb">${icon('sprout')}</div>
+        <h2>Nothing to check in yet</h2>
+        <p class="muted">Start a journey under Your Journeys, and it will show up here.</p>
+      </div>`;
+  } else if (state.reorder) {
+    body = `
+      <section class="block">
+        <p class="muted hint">Drag a journey to a new place. Your Journeys shows the same order.</p>
+        ${dragListHTML(active, today)}
+      </section>`;
+  } else if (!due.length) {
+    body = `<div class="all-clear">${icon('circle-check')}<span>All caught up. Nothing needs a check-in right now.</span></div>`;
+  } else {
+    body = `<section class="block"><div class="due-list">${due.map((g) => checkRowHTML(g, today)).join('')}</div></section>`;
+  }
 
   return `
     <div class="page-in-target">
       <header class="hero">
-        <p class="eyebrow">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-        <h1>${greet}, ${esc(name)}</h1>
-        <div class="stats">
-          <div class="stat">${icon('flame')}<div><strong>${active.length}</strong><span>Active</span></div></div>
-          <div class="stat">${icon('trophy')}<div><strong>${accomplishedCount}</strong><span>Accomplished</span></div></div>
-        </div>
+        <p class="eyebrow">${greeting()}, ${esc(name)}</p>
+        <h1 class="page-title">Check In</h1>
+        ${active.length ? `
+        <div class="checkin-bar">
+          <div class="stats summary">
+            <div class="stat"><div><strong>${s.filled}</strong><span>Filled</span></div></div>
+            <div class="stat${s.needed ? ' hot' : ''}"><div><strong>${s.needed}</strong><span>To fill</span></div></div>
+          </div>
+          ${editBtn}
+        </div>` : ''}
       </header>
       ${body}
-      ${active.length ? `<button class="fab" data-action="new" aria-label="New journey">${icon('plus')}<span>New</span></button>` : ''}
+    </div>`;
+}
+
+// Screen 2: Your Journeys. No editing here: New Journey is the one centred action.
+function viewJourneys() {
+  const today = L.todayStr();
+  const active = sortedActive();
+  const list = active.length
+    ? `<div class="goal-grid">${active.map((g) => goalCard(g, today)).join('')}</div>`
+    : `<div class="empty small">
+        <div class="empty-orb">${icon('sprout')}</div>
+        <h3>No journeys yet</h3>
+        <p class="muted">Press New Journey to begin.</p>
+      </div>`;
+
+  return `
+    <div class="page-in-target">
+      <header class="hero">
+        <p class="eyebrow">Your record</p>
+        <h1 class="page-title">Your Journeys</h1>
+        <div class="stats summary">
+          <div class="stat"><div><strong>${active.length}</strong><span>Active</span></div></div>
+        </div>
+      </header>
+      <div class="center-action">
+        <button class="btn primary big" data-action="new">${icon('plus')}New Journey</button>
+      </div>
+      ${list}
     </div>`;
 }
 
@@ -461,16 +692,39 @@ function cellHTML(c, g, today, av) {
   return `<div class="cell s-${c.state}" style="${style}" title="Day ${n} · ${fmtDate(c.date)}"><span class="num">${n}</span></div>`;
 }
 
-function viewGoal(id) {
-  const g = state.goals.find((x) => x.id === id);
-  if (!g) {
-    return `<div class="empty"><h2>Journey not found</h2><a class="btn ghost" href="#/home">Back home</a></div>`;
-  }
-  const today = L.todayStr();
-  const j = L.journey(g, today);
-  const pct = Math.min(100, Math.round((j.done / g.targetDays) * 100));
+function goalHeadHTML(g) {
+  return `
+    <header class="goal-head" style="--c:${g.color}">
+      <a class="icon-btn back" href="#/journeys" aria-label="Back">${icon('arrow-left')}</a>
+      <div class="goal-title">
+        <span class="goal-icon lg">${icon(g.icon)}</span>
+        <div>
+          <p class="eyebrow">${typeName(g)}</p>
+          <h1>${esc(g.title)}</h1>
+          ${g.description ? `<p class="desc">${esc(g.description)}</p>` : ''}
+          ${g.why ? `<p class="why"><strong>Why:</strong> ${esc(g.why)}</p>` : ''}
+        </div>
+      </div>
+      <button class="icon-btn" data-action="goal-settings" data-goal="${g.id}" aria-label="Edit journey">${icon('pencil')}</button>
+    </header>`;
+}
+
+function ringHTML(pct, centre) {
   const r = 54;
   const circ = 2 * Math.PI * r;
+  return `
+    <div class="ring">
+      <svg viewBox="0 0 120 120" aria-hidden="true">
+        <circle cx="60" cy="60" r="${r}" class="ring-bg"></circle>
+        <circle cx="60" cy="60" r="${r}" class="ring-fg" style="stroke-dasharray:${circ};stroke-dashoffset:${circ * (1 - pct / 100)}"></circle>
+      </svg>
+      <div class="ring-label"><strong>${pct}%</strong><span>${centre}</span></div>
+    </div>`;
+}
+
+function viewHabitGoal(g, today) {
+  const j = L.journey(g, today);
+  const pct = Math.min(100, Math.round((j.done / g.targetDays) * 100));
   const dayNum = L.dayNumber(g, today);
   const policy = L.policyFor(g);
   const nextExc = L.exceptionAvailability(g, j.next?.date || today);
@@ -486,14 +740,14 @@ function viewGoal(id) {
   } else if (j.next) {
     const isToday = j.next.date === today;
     const consequence = nextExc.ok
-      ? `A miss uses one of your ${nextExc.remaining} exception${nextExc.remaining > 1 ? 's' : ''} and ${g.type === 'smart' ? 'moves the deadline out by a day' : 'adds a day to the journey'}.`
+      ? `A miss uses one of your ${nextExc.remaining} exception${nextExc.remaining > 1 ? 's' : ''} and adds a day to the journey.`
       : (nextExc.reason === 'too_soon'
         ? `You already used an exception recently. A miss now restarts the journey. The next exception opens on ${fmtDate(nextExc.nextAllowed)}.`
         : nextExc.reason === 'not_allowed'
           ? 'Sankalpas have no exceptions. A miss restarts the journey.'
           : 'All exceptions are used. A miss restarts the journey.');
     panel = `
-      <section class="panel checkin-panel">
+      <section class="panel checkin-panel compact">
         <div class="checkin-copy">
           <p class="eyebrow">${isToday ? 'Today' : 'Pending'} · ${fmtDate(j.next.date)}</p>
           <h3>Did you ${keepPhrase(g)} on this day?</h3>
@@ -511,10 +765,9 @@ function viewGoal(id) {
   const past = (g.history || []).filter((h) => h.outcome === 'failed' || h.outcome === 'abandoned');
   const pastHTML = past.length ? `
     <section class="block">
-      <div class="block-head"><h2>Earlier attempts</h2></div>
+      <div class="block-head"><h2>Past runs</h2></div>
       <div class="attempt-list">${past.slice().reverse().map((h) => `
         <div class="attempt">
-          <span class="attempt-n">#${h.attempt}</span>
           <div><strong>${fmtDate(h.startDate)} → ${fmtDate(h.endDate)}</strong>
           <small>${h.doneCount} of ${h.targetDays} days · ${esc(h.reason)}</small></div>
         </div>`).join('')}</div>
@@ -522,27 +775,10 @@ function viewGoal(id) {
 
   return `
     <div class="page-in-target">
-      <header class="goal-head" style="--c:${g.color}">
-        <a class="icon-btn back" href="#/home" aria-label="Back">${icon('arrow-left')}</a>
-        <div class="goal-title">
-          <span class="goal-icon lg">${icon(g.icon)}</span>
-          <div>
-            <p class="eyebrow">${typeName(g)} · Attempt ${g.attempt}</p>
-            <h1>${esc(g.title)}</h1>
-            ${g.why ? `<p class="why">${esc(g.why)}</p>` : ''}
-          </div>
-        </div>
-        <button class="icon-btn" data-action="goal-settings" data-goal="${g.id}" aria-label="Edit journey">${icon('pencil')}</button>
-      </header>
+      ${goalHeadHTML(g)}
 
       <div class="overview">
-        <div class="ring">
-          <svg viewBox="0 0 120 120" aria-hidden="true">
-            <circle cx="60" cy="60" r="${r}" class="ring-bg"></circle>
-            <circle cx="60" cy="60" r="${r}" class="ring-fg" style="stroke-dasharray:${circ};stroke-dashoffset:${circ * (1 - pct / 100)}"></circle>
-          </svg>
-          <div class="ring-label"><strong>${pct}%</strong><span>${j.done}/${g.targetDays}</span></div>
-        </div>
+        ${ringHTML(pct, `${j.done}/${g.targetDays}`)}
         <div class="kpis">
           <div class="kpi"><span>Day</span><strong>${dayNum}<small> / ${j.total}</small></strong></div>
           ${policy.maxExceptions
@@ -554,9 +790,6 @@ function viewGoal(id) {
       </div>
 
       ${panel}
-
-      ${g.type === 'smart' && g.smart ? smartPlanHTML(g) : ''}
-      ${detailsHTML(g)}
 
       <section class="block">
         <div class="block-head">
@@ -575,123 +808,199 @@ function viewGoal(id) {
     </div>`;
 }
 
+// The pace insight: how many days are left at the current pace, and whether the goal is growing, shrinking or on pace.
+function paceNoteHTML(g, p) {
+  if (p.complete) return '';
+  const n = p.planned.days;
+  const end = fmtDate(p.projected.end);
+  const left = p.daysLeft;
+  const status = p.verdict === 'extended'
+    ? { cls: 'behind', word: 'Growing', icon: 'trending-up' }
+    : p.verdict === 'ahead'
+      ? { cls: 'ahead', word: 'Shrinking', icon: 'trending-down' }
+      : { cls: '', word: 'On pace', icon: 'circle-check' };
+  const detail = p.verdict === 'extended'
+    ? `It was planned for ${n} days. You are behind, so the goal now runs ${p.projected.days} days, ending ${end}. Do a little more each day to bring it back.`
+    : p.verdict === 'ahead'
+      ? `It was planned for ${n} days. You are ahead, so the goal now runs ${p.projected.days} days, ending ${end}. Keep going and it gets shorter.`
+      : `It is planned for ${n} days, ending ${end}. Keep this pace to finish on time.`;
+  return `
+    <section class="panel pace-panel ${status.cls}">
+      ${icon(status.icon)}
+      <div>
+        <p class="pace-status">${status.word}</p>
+        <h3>${left} day${left === 1 ? '' : 's'} left at your current pace</h3>
+        <p>${detail}</p>
+      </div>
+    </section>`;
+}
+
+function viewSmartGoal(g, today) {
+  const p = L.smartProgress(g, today);
+  const pct = Math.round(p.ratio * 100);
+  const pick = state.pickDay[g.id] || null;
+
+  let panel = '';
+  if (g.status === 'completed') {
+    panel = `<section class="panel done-panel">${icon('trophy')}<div><h3>Accomplished on ${fmtDate(g.completedAt?.slice(0, 10))}</h3>
+      <p class="muted">Every target in your plan was met.</p></div>
+      <a class="btn ghost sm" href="#/accomplishments">View</a>
+      <button class="btn primary sm" data-action="redo" data-goal="${g.id}">${icon('rotate-ccw')}Redo</button></section>`;
+  } else if (g.status === 'abandoned') {
+    panel = `<section class="panel muted-panel">${icon('ban')}<div><h3>Closed</h3><p class="muted">This goal was closed and is listed under Not accomplished.</p></div></section>`;
+  } else {
+    panel = paceNoteHTML(g, p);
+  }
+
+  const logBlock = g.status === 'active' ? `
+    <section class="block">
+      <div class="block-head"><h2>Log your numbers</h2></div>
+      <div class="smart-due">${smartLogHTML(g, today, pick)}</div>
+    </section>` : '';
+
+  // Every day from the first to the projected end. Done, open and past days can be picked to edit.
+  const cells = p.days.map((d) => {
+    const clickable = d.date <= today && d.state !== 'locked';
+    const tag = clickable ? 'button' : 'div';
+    const attrs = clickable
+      ? ` type="button" data-action="day-pick" data-goal="${esc(g.id)}" data-date="${d.date}"`
+      : '';
+    return `<${tag} class="cell s-${d.state}${pick === d.date ? ' picked' : ''}" style="--i:${Math.min(d.index, 40)}" title="Day ${d.index + 1} · ${fmtDate(d.date)}"${attrs}>${d.state === 'done' ? icon('check') : `<span class="num">${d.index + 1}</span>`}</${tag}>`;
+  }).join('');
+
+  const targets = p.items.length
+    ? p.items.map((it) => trackRowHTML(it, p.daysLeft)).join('')
+    : '<p class="muted">This goal has no plan yet. Add one from Edit.</p>';
+
+  return `
+    <div class="page-in-target">
+      ${goalHeadHTML(g)}
+
+      <div class="overview">
+        ${ringHTML(pct, `${p.items.filter((i) => i.complete).length}/${p.items.length} met`)}
+        <div class="kpis">
+          <div class="kpi"><span>Days left</span><strong>${p.daysLeft}</strong></div>
+          <div class="kpi"><span>Zero days</span><strong>${p.zeroDays}</strong></div>
+          <div class="kpi"><span>Days logged</span><strong>${p.loggedDays}</strong></div>
+          <div class="kpi"><span>End date</span><strong class="sm">${fmtDate(p.projected.end)}</strong></div>
+        </div>
+      </div>
+
+      ${panel}
+      ${logBlock}
+
+      <section class="block">
+        <div class="block-head">
+          <h2>Day by day</h2>
+          <div class="legend">
+            <span><i class="dot d"></i>Done</span><span><i class="dot a"></i>Open</span>
+            <span><i class="dot q"></i>Waiting</span><span><i class="dot l"></i>Locked</span>
+          </div>
+        </div>
+        <p class="muted hint">A day is done when every item reaches its daily amount. Tap a finished day to edit it.</p>
+        <div class="journey">${cells}</div>
+      </section>
+
+      <section class="block">
+        <div class="block-head"><h2>Targets</h2></div>
+        <div class="track-list">${targets}</div>
+      </section>
+
+      ${smartPlanHTML(g)}
+    </div>`;
+}
+
+// One target: done so far, what is left, and what it takes per day from here to finish.
+function trackRowHTML(it, daysLeft) {
+  const per = L.periodLabel(it.per);
+  const pct = Math.round(it.ratio * 100);
+  let needText = 'Target met';
+  if (!it.complete) {
+    const span = Math.max(1, Math.ceil(daysLeft / (L.PERIOD_DAYS[it.per] || 1)));
+    const need = Math.ceil((it.remaining / span) * 10) / 10;
+    needText = `${fmtNum(it.remaining)} left · about ${fmtNum(need)} ${per} from here`;
+  }
+  return `
+    <div class="track-row${it.complete ? ' met' : ''}">
+      <div class="track-main"><strong>${esc(it.action)}</strong><small class="muted">Goal ${fmtNum(it.amount)} ${esc(per)}</small></div>
+      <div class="track-meter">
+        <div class="bar"><span style="width:${pct}%"></span></div>
+        <small>${fmtNum(it.done)} of ${fmtNum(it.total)} · ${pct}%</small>
+      </div>
+      <small class="track-need">${needText}</small>
+    </div>`;
+}
+
+function viewGoal(id) {
+  const g = state.goals.find((x) => x.id === id);
+  if (!g) {
+    return `<div class="empty"><h2>Journey not found</h2><a class="btn ghost" href="#/journeys">Back to your journeys</a></div>`;
+  }
+  const today = L.todayStr();
+  return g.type === 'smart' && g.smart ? viewSmartGoal(g, today) : viewHabitGoal(g, today);
+}
+
+// Three columns on a wide screen, one stack on a phone. Each column is one type.
+function typeColumns(items, renderCard, emptyText) {
+  return `<div class="type-cols">${L.TYPES.map((type) => {
+    const list = items.filter((x) => x.type === type);
+    return `
+      <section class="type-col" data-type="${type}">
+        <header class="type-col-head">${icon(TYPE_ICON[type])}<span>${TYPE_PLURAL[type]}</span><b>${list.length}</b></header>
+        ${list.length
+          ? `<div class="type-col-list">${list.map(renderCard).join('')}</div>`
+          : `<p class="muted type-col-empty">${esc(emptyText)}</p>`}
+      </section>`;
+  }).join('')}</div>`;
+}
+
+// Accomplished and Not accomplished. Each entry is only its title, one status word, and Redo.
+// Tapping the title opens the journey for the details.
 function viewAccomplishments() {
   const tab = state.accTab;
   const done = L.accomplished(state.goals);
-  const misses = L.notAccomplished(state.goals);
+  const misses = L.notAccomplished(state.goals, L.todayStr());
   const tabs = `
     <div class="segmented" role="tablist">
       <button role="tab" aria-selected="${tab === 'accomplished'}" class="${tab === 'accomplished' ? 'on' : ''}" data-action="acc-tab" data-tab="accomplished">${icon('trophy')}Accomplished <b>${done.length}</b></button>
       <button role="tab" aria-selected="${tab === 'missed'}" class="${tab === 'missed' ? 'on' : ''}" data-action="acc-tab" data-tab="missed">${icon('circle-x')}Not accomplished <b>${misses.length}</b></button>
     </div>`;
 
+  const record = (title, status, tone, goalId, redoAction) => `
+    <article class="rec-card">
+      <a class="rec-title" href="#/goal/${encodeURIComponent(goalId)}">${esc(title)}</a>
+      <div class="rec-side">
+        <span class="rec-status ${tone}">${esc(status)}</span>
+        <button class="btn ghost sm" data-action="${redoAction}" data-goal="${esc(goalId)}">${icon('rotate-ccw')}Redo</button>
+      </div>
+    </article>`;
+
   let list;
   if (tab === 'accomplished') {
-    list = done.length ? `<div class="acc-grid">${done.map((g) => {
-      const exc = L.exceptionCount(g);
-      return `
-        <article class="acc-card" style="--c:${g.color}">
-          <a class="acc-main" href="#/goal/${encodeURIComponent(g.id)}">
-            <div class="goal-icon">${icon(g.icon)}</div>
-            <div class="acc-body">
-              <h3>${esc(g.title)}</h3>
-              <p>${typeName(g)} · ${g.targetDays} days${exc ? ` · ${exc} exception${exc > 1 ? 's' : ''}` : ''}</p>
-              <small>Completed ${fmtDate(g.completedAt?.slice(0, 10))}${g.attempt > 1 ? ` · attempt ${g.attempt}` : ''}</small>
-            </div>
-            <span class="acc-badge">${icon('circle-check')}</span>
-          </a>
-          <button class="btn ghost sm redo-btn" data-action="redo" data-goal="${g.id}">${icon('rotate-ccw')}Redo</button>
-        </article>`;
-    }).join('')}</div>` : emptyBlock('trophy', 'Nothing accomplished yet', 'Complete a journey and it will land here.');
+    list = typeColumns(done, (g) => record(g.title, 'Accomplished', 'ok', g.id, 'redo'), 'Nothing accomplished in this group yet.');
   } else {
-    list = misses.length ? `<div class="miss-list">${misses.map((m) => `
-      <div class="miss-card" style="--c:${m.color}">
-        <div class="goal-icon">${icon(m.icon)}</div>
-        <div class="acc-body">
-          <h3>${esc(m.title)} <span class="attempt-tag">#${m.attempt}</span></h3>
-          <p>${fmtDate(m.startDate)} → ${fmtDate(m.endDate)} · ${m.doneCount} of ${m.targetDays} days</p>
-          <small>${esc(m.reason)}</small>
-        </div>
-        <span class="outcome ${m.outcome}">${m.outcome === 'abandoned' ? 'Abandoned' : 'Not kept'}</span>
-      </div>`).join('')}</div>` : emptyBlock('sparkles', 'No misses on record', 'Every journey you have started is still on track or accomplished.');
+    list = typeColumns(misses, (m) => (m.outcome === 'abandoned'
+      ? record(m.title, 'Abandoned', 'abandoned', m.goalId, 'redo-miss')
+      : record(m.title, 'Not accomplished', 'failed', m.goalId, 'redo-miss')), 'No misses in this group.');
   }
 
+  const empty = !done.length && !misses.length;
   return `
     <div class="page-in-target">
       <header class="hero">
         <p class="eyebrow">Your record</p>
-        <h1>Accomplishments</h1>
-        <p class="muted">Nothing is ever deleted. Each attempt stays here, whether it was kept or not.</p>
+        <h1 class="page-title">Accomplishments</h1>
       </header>
       ${tabs}
-      <section class="block">${list}</section>
+      <section class="block">${empty && tab === 'accomplished'
+        ? emptyBlock('trophy', 'Nothing accomplished yet', 'Complete a journey and it will land here.')
+        : empty ? emptyBlock('sparkles', 'No misses on record', 'Every journey you have started is still on track or accomplished.')
+          : list}</section>
     </div>`;
 }
 
 function emptyBlock(iconName, title, text) {
   return `<div class="empty small"><div class="empty-orb">${icon(iconName)}</div><h3>${esc(title)}</h3><p class="muted">${esc(text)}</p></div>`;
-}
-
-// ---------- dialogs ----------
-
-// The five SMART answers as form fields. Used by the create and edit dialogs.
-function smartFieldsHTML(values = {}) {
-  return L.SMART_FIELDS.map((f) => `
-    <label class="field">
-      <span>${esc(f.label)}</span>
-      <small class="muted field-hint">${esc(f.hint)}</small>
-      <textarea name="${f.key}" rows="2" maxlength="500">${esc(values[f.key] || '')}</textarea>
-    </label>`).join('');
-}
-
-// Shows only the fields that belong to the chosen type.
-function showTypeFields(w, type) {
-  w.querySelectorAll('[data-only]').forEach((el) => { el.hidden = el.dataset.only !== type; });
-  const label = w.querySelector('[data-title-label]');
-  if (label) label.textContent = type === 'smart' ? 'Goal' : 'Title';
-}
-
-const DETAIL_HINTS = {
-  what: 'What exactly you will do',
-  how: 'The steps or method you will use',
-  where: 'The place or tool you will use',
-  when: 'The time of day or schedule',
-  more: 'Anything else that matters to you',
-};
-
-// Optional detail boxes, folded away until the user opens them.
-function detailFieldsHTML(values = {}) {
-  const filled = Object.values(values).some(Boolean);
-  return `
-    <details class="more-details"${filled ? ' open' : ''}>
-      <summary>${icon('notebook-pen')} Add details: what, how, where, when</summary>
-      ${L.DETAIL_KEYS.map((k) => `
-        <label class="field"><span>${esc(L.DETAIL_LABELS[k])} <small class="muted">(optional)</small></span>
-          <textarea name="d_${k}" rows="2" maxlength="1000" placeholder="${esc(DETAIL_HINTS[k])}">${esc(values[k] || '')}</textarea></label>`).join('')}
-    </details>`;
-}
-
-function detailsFormValues(fd) {
-  return L.cleanDetails(Object.fromEntries(L.DETAIL_KEYS.map((k) => [k, fd.get('d_' + k)])));
-}
-
-function detailsHTML(g) {
-  const d = g.details || {};
-  const rows = L.DETAIL_KEYS.filter((k) => d[k]);
-  if (!rows.length) return '';
-  return `
-    <section class="block">
-      <div class="block-head"><h2>Details</h2></div>
-      <div class="smart-plan">${rows.map((k) => `
-        <div class="smart-item">
-          <span class="smart-k">${esc(L.DETAIL_LABELS[k])}</span>
-          <p>${esc(d[k])}</p>
-        </div>`).join('')}</div>
-    </section>`;
-}
-
-function smartFormValues(fd) {
-  return Object.fromEntries(L.SMART_FIELDS.map((f) => [f.key, fd.get(f.key)]));
 }
 
 function smartPlanHTML(g) {
@@ -706,6 +1015,111 @@ function smartPlanHTML(g) {
     </section>`;
 }
 
+// ---------- dialogs ----------
+
+// The three SMART text parts: Specific, Realistic, Time-bound.
+function smartFieldsHTML(values = {}) {
+  return L.SMART_FIELDS.map((f) => `
+    <label class="field">
+      <span>${esc(f.label)}</span>
+      <small class="muted field-hint">${esc(f.hint)}</small>
+      <textarea name="${f.key}" rows="2" maxlength="500">${esc(values[f.key] || '')}</textarea>
+    </label>`).join('');
+}
+
+function descriptionFieldHTML(value = '') {
+  return `
+    <label class="field"><span>Description <small class="muted">(optional)</small></span>
+      <textarea name="description" rows="2" maxlength="1000" placeholder="What this is, in a sentence or two">${esc(value)}</textarea></label>`;
+}
+
+function whyFieldHTML(value = '') {
+  return `
+    <label class="field"><span>Why <small class="muted">(required)</small></span>
+      <textarea name="why" rows="2" maxlength="500" required placeholder="The reason this matters to you">${esc(value)}</textarea></label>`;
+}
+
+// One row of the SMART plan: what to do on the left, how much and per day or week on the right.
+function planRowHTML(row = {}) {
+  return `
+    <div class="plan-row" data-plan-row>
+      <input name="p_action" maxlength="200" placeholder="e.g. Read a chapter" value="${esc(row.action || '')}" aria-label="Actionable item">
+      <div class="plan-measure">
+        <input name="p_amount" type="number" min="0" step="any" inputmode="decimal" placeholder="10" value="${esc(row.amount ?? '')}" aria-label="Measurable amount">
+        <input type="hidden" name="p_key" value="${row.key ?? ''}">
+        <select name="p_per" aria-label="How often">
+          ${L.PERIOD_OPTIONS.map(([k, label]) => `<option value="${k}"${(row.per || 'day') === k ? ' selected' : ''}>${label}</option>`).join('')}
+        </select>
+        <button type="button" class="icon-btn plan-remove" data-plan-remove aria-label="Remove this item">${icon('x')}</button>
+      </div>
+    </div>`;
+}
+
+function planHTML(rows = []) {
+  return `
+    <div class="field plan-field">
+      <span>Plan: actionable and measurable</span>
+      <p class="muted field-hint">Left: what you will do. Right: how much, per day or per week. Add one row for each action.</p>
+      <div class="plan" data-plan>
+        <div class="plan-head" aria-hidden="true"><span>Actionable</span><span>Measurable</span></div>
+        <div class="plan-rows" data-plan-rows>${(rows.length ? rows : [{}]).map(planRowHTML).join('')}</div>
+        <button type="button" class="btn ghost sm plan-add" data-plan-add>${icon('plus')}Add an item</button>
+      </div>
+    </div>`;
+}
+
+function wirePlan(root) {
+  root.addEventListener('click', (e) => {
+    if (e.target.closest('[data-plan-add]')) {
+      const rows = root.querySelector('[data-plan-rows]');
+      if (!rows || rows.children.length >= L.MAX_PLAN_ROWS) {
+        toast(`Use at most ${L.MAX_PLAN_ROWS} actionable items.`, 'error');
+        return;
+      }
+      rows.insertAdjacentHTML('beforeend', planRowHTML());
+      rows.lastElementChild.querySelector('input').focus();
+      return;
+    }
+    const rm = e.target.closest('[data-plan-remove]');
+    if (rm) rm.closest('[data-plan-row]').remove();
+  });
+}
+
+function planFromForm(fd) {
+  const actions = fd.getAll('p_action');
+  const amounts = fd.getAll('p_amount');
+  const pers = fd.getAll('p_per');
+  const keys = fd.getAll('p_key');
+  return actions.map((action, i) => ({ action, amount: amounts[i], per: pers[i], key: keys[i] }));
+}
+
+function smartFromForm(fd) {
+  return {
+    ...Object.fromEntries(L.SMART_FIELDS.map((f) => [f.key, fd.get(f.key)])),
+    plan: planFromForm(fd),
+  };
+}
+
+// Shows only the fields that belong to the chosen type. data-only lists types, e.g. "sankalpa smart".
+function showTypeFields(w, type) {
+  w.querySelectorAll('[data-only]').forEach((el) => { el.hidden = !el.dataset.only.split(' ').includes(type); });
+  const label = w.querySelector('[data-title-label]');
+  if (label) label.textContent = L.TYPE_LABEL[type] || 'Habit';
+}
+
+// "Ends on ..." under the days and deadline fields of a SMART goal.
+function updateEndHint(form) {
+  const hint = form.querySelector('[data-end-hint]');
+  if (!hint) return;
+  const start = form.querySelector('[name="startDate"]').value;
+  const days = Math.floor(Number(form.querySelector('[name="days"]').value));
+  const end = form.querySelector('[name="endDate"]').value;
+  let text = 'Leave the deadline empty to use the days.';
+  if (end) text = `Deadline set to ${fmtDate(end)}.`;
+  else if (start && days > 0) text = `Ends on ${fmtDate(L.addDays(start, days - 1))}.`;
+  hint.textContent = text;
+}
+
 function openCreate() {
   const today = L.todayStr();
   const body = `
@@ -718,25 +1132,28 @@ function openCreate() {
         <label class="type-card"><input type="radio" name="type" value="smart">
           ${icon('target')}<strong>SMART goal</strong></label>
       </div>
-      <label class="field"><span data-title-label>Title</span>
+      <label class="field"><span data-title-label>Habit</span>
         <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" required autocomplete="off"></label>
-      <label class="field" data-only="sankalpa" hidden><span>Days</span>
-        <input name="days" type="number" min="1" max="365" inputmode="numeric" placeholder="e.g. 30"></label>
+      ${descriptionFieldHTML()}
+      ${whyFieldHTML()}
       <div class="field-row">
         <label class="field"><span>Start date</span>
-          <input name="startDate" type="date" value="${today}" required></label>
-        <label class="field" data-only="smart" hidden><span>Deadline</span>
-          <input name="endDate" type="date" value="${L.addDays(today, 29)}"></label>
+          <input name="startDate" type="date" value="${today}"></label>
+        <label class="field" data-only="sankalpa smart" hidden><span>Days</span>
+          <input name="days" type="number" min="1" max="365" inputmode="numeric" placeholder="e.g. 30"></label>
+      </div>
+      <div class="field-row" data-only="smart" hidden>
+        <label class="field"><span>Deadline <small class="muted">(optional)</small></span>
+          <input name="endDate" type="date"></label>
+        <p class="muted form-hint end-hint" data-end-hint>Leave the deadline empty to use the days.</p>
       </div>
       <div data-only="smart" hidden>
-        <p class="muted form-hint">${icon('target')} Answer each part in your own words. You check in every day until the deadline.</p>
+        <p class="muted form-hint">${icon('target')} Describe the goal, then build the plan. You log your numbers every day.</p>
         ${smartFieldsHTML()}
+        ${planHTML([])}
       </div>
-      <label class="field"><span>Why (optional)</span>
-        <textarea name="why" rows="2" maxlength="500" placeholder="The reason this matters to you"></textarea></label>
-      ${detailFieldsHTML()}
-      <div class="field"><span>Icon</span>${iconPicker('', { auto: true })}</div>
-      <div class="field"><span>Color</span>${colorPicker(COLORS[0])}</div>
+      <div class="field"><span>Icon</span>${iconDropdown('', { auto: true })}</div>
+      <div class="field"><span>Colour</span>${colorDropdown(PASTELS[0].hex)}</div>
       <p class="error" data-error hidden></p>
     </form>`;
   const footer = `<button class="btn ghost" data-close>Cancel</button><button class="btn primary" form="create-form" type="submit">Start journey</button>`;
@@ -747,9 +1164,12 @@ function openCreate() {
     onMount: (w, close) => {
       const form = w.querySelector('#create-form');
       const errBox = w.querySelector('[data-error]');
+      wireDropdowns(w);
+      wirePlan(w);
       form.addEventListener('change', (e) => {
         if (e.target.name === 'type') showTypeFields(w, e.target.value);
       });
+      form.addEventListener('input', () => updateEndHint(form));
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         errBox.hidden = true;
@@ -758,38 +1178,39 @@ function openCreate() {
           const data = L.newGoalData({
             type: fd.get('type'),
             title: fd.get('title'),
+            description: fd.get('description'),
             why: fd.get('why'),
             days: fd.get('days'),
             startDate: fd.get('startDate'),
             endDate: fd.get('endDate'),
-            smart: smartFormValues(fd),
-            details: detailsFormValues(fd),
+            smart: smartFromForm(fd),
             icon: fd.get('icon'),
             color: fd.get('color'),
+            order: L.nextOrder(state.goals),
           });
           const id = await db.createGoal(state.user.uid, data);
           close();
           location.hash = `#/goal/${encodeURIComponent(id)}`;
-          toast(`${data.title} is on your sidebar`, 'success');
+          toast(`${data.title} is on your journeys`, 'success');
         } catch (err) {
           errBox.textContent = err.message;
           errBox.hidden = false;
         }
       });
-      wireIconPicker(w);
-      wireColorPicker(w);
       setTimeout(() => form.querySelector('[name="title"]').focus(), 60);
     },
   });
 }
 
 // Starts a new journey from an accomplished one. The date (and length or deadline) is chosen in the pop-up.
-function openRedo(g) {
-  if (!g || g.status !== 'completed') return;
+function openRedo(g, { fromMiss = false } = {}) {
+  if (!g || (g.status !== 'completed' && !fromMiss)) return;
   const d = L.redoDefaults(g);
   const body = `
     <form id="redo-form" class="form" novalidate>
       <p class="muted">${esc(g.title)} starts again as a new ${esc(typeName(g).toLowerCase())}. The accomplished record stays where it is.</p>
+      ${descriptionFieldHTML(d.description)}
+      ${whyFieldHTML(d.why)}
       <label class="field"><span>Start date</span>
         <input name="startDate" type="date" value="${d.startDate}" required></label>
       ${g.type === 'sankalpa' ? `<label class="field"><span>Days</span>
@@ -812,14 +1233,18 @@ function openRedo(g) {
         const fd = new FormData(form);
         try {
           const data = L.redoData(g, {
+            fromMiss,
             startDate: fd.get('startDate'),
             days: fd.get('days'),
             endDate: fd.get('endDate'),
+            why: fd.get('why'),
+            description: fd.get('description'),
+            order: L.nextOrder(state.goals),
           });
           const id = await db.createGoal(state.user.uid, data);
           close();
           location.hash = `#/goal/${encodeURIComponent(id)}`;
-          toast(`${g.title} is back on your sidebar`, 'success');
+          toast(`${g.title} is back on your journeys`, 'success');
         } catch (err) {
           errBox.textContent = err.message;
           errBox.hidden = false;
@@ -829,25 +1254,38 @@ function openRedo(g) {
   });
 }
 
+// Edit: every field that the user could fill in when creating the journey.
+// Habits keep their 66 days. A sankalpa's length, and a SMART goal's dates and plan, can all change.
 function openGoalSettings(g) {
-  // The start date can change only before the first check-in, so the grid never shifts under existing days.
-  const startEditable = g.status === 'active' && Object.keys(g.checkins || {}).length === 0;
+  if (!g) return;
+  const isSmart = g.type === 'smart' && g.smart;
+  const hasCheckins = Object.keys(g.checkins || {}).length > 0;
+  // Habits and sankalpas keep their grid by day, so the start date locks after the first check-in.
+  // SMART goals keep their numbers by date, so their dates and plan stay editable.
+  const startEditable = isSmart || (g.status === 'active' && !hasCheckins);
+  const lengthField = g.type === 'habit' ? '' : `
+    <label class="field"><span>Days</span>
+      <input name="days" type="number" min="1" max="365" inputmode="numeric" value="${g.targetDays}"></label>`;
+
   const body = `
     <form id="edit-form" class="form" novalidate>
-      <label class="field"><span>Title</span>
+      <label class="field"><span>${esc(L.TYPE_LABEL[g.type] || 'Habit')}</span>
         <input name="title" maxlength="80" required value="${esc(g.title)}"></label>
-      <label class="field"><span>Start date${startEditable ? '' : ' (locked after the first check-in)'}</span>
-        <input name="startDate" type="date" value="${esc(g.attemptStart)}" ${startEditable ? '' : 'disabled'}></label>
-      ${g.type === 'smart' ? `
-        ${startEditable
-          ? `<label class="field"><span>Deadline</span><input name="endDate" type="date" value="${esc(g.smart?.endDate || '')}"></label>`
-          : '<p class="muted form-hint">The deadline is locked after the first check-in.</p>'}
-        ${smartFieldsHTML(g.smart || {})}` : ''}
-      <label class="field"><span>Why</span>
-        <textarea name="why" rows="2" maxlength="500">${esc(g.why)}</textarea></label>
-      ${detailFieldsHTML(g.details || {})}
-      <div class="field"><span>Icon</span>${iconPicker(g.icon)}</div>
-      <div class="field"><span>Color</span>${colorPicker(g.color)}</div>
+      ${descriptionFieldHTML(g.description || '')}
+      ${whyFieldHTML(g.why || '')}
+      <div class="field-row">
+        <label class="field"><span>Start date${startEditable ? '' : ' (locked after the first check-in)'}</span>
+          <input name="startDate" type="date" value="${esc(g.attemptStart)}" ${startEditable ? '' : 'disabled'}></label>
+        ${g.type === 'habit' ? '' : lengthField}
+      </div>
+      ${isSmart ? `
+        <label class="field"><span>Deadline</span>
+          <input name="endDate" type="date" value="${esc(g.smart.endDate)}"></label>
+        <p class="muted form-hint">If you change the days, the deadline follows them. Otherwise the deadline is used.</p>
+        ${smartFieldsHTML(g.smart)}
+        ${planHTML(g.smart.plan || [])}` : ''}
+      <div class="field"><span>Icon</span>${iconDropdown(g.icon)}</div>
+      <div class="field"><span>Colour</span>${colorDropdown(g.color)}</div>
       <p class="error" data-error hidden></p>
       <div class="danger-zone">
         <div><strong>Abandon this journey</strong><small class="muted">It moves to Not accomplished. Nothing is deleted.</small></div>
@@ -861,26 +1299,33 @@ function openGoalSettings(g) {
     onMount: (w, close) => {
       const form = w.querySelector('#edit-form');
       const errBox = w.querySelector('[data-error]');
-      wireIconPicker(w);
-      wireColorPicker(w);
+      wireDropdowns(w);
+      wirePlan(w);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        errBox.hidden = true;
         const fd = new FormData(form);
-        const title = String(fd.get('title') || '').trim();
-        if (!title) { errBox.textContent = 'Title cannot be empty.'; errBox.hidden = false; return; }
         try {
+          const title = L.titleCase(String(fd.get('title') || '').trim()).slice(0, 80);
+          if (!title) throw new Error('Title cannot be empty.');
           const fields = {
-            title: title.slice(0, 80),
-            why: String(fd.get('why') || '').trim().slice(0, 500),
+            title,
+            description: L.cleanDescription(fd.get('description')),
+            why: L.requireWhy(fd.get('why')),
             icon: fd.get('icon') || g.icon,
             color: fd.get('color') || g.color,
           };
-          fields.details = detailsFormValues(fd);
           if (startEditable) fields.attemptStart = L.normalizeStartDate(fd.get('startDate'));
-          if (g.type === 'smart') {
+          if (g.type === 'sankalpa') fields.targetDays = L.cleanSankalpaDays(g, fd.get('days'));
+          if (isSmart) {
             const start = fields.attemptStart || g.attemptStart;
-            const end = startEditable ? L.normalizeEndDate(fd.get('endDate'), start) : g.smart.endDate;
-            fields.smart = { ...L.cleanSmart(smartFormValues(fd)), endDate: end };
+            const days = Math.floor(Number(fd.get('days')));
+            // Changing the days moves the deadline; otherwise the chosen deadline stands.
+            const end = days !== g.targetDays
+              ? L.resolveSmartEnd(start, { days })
+              : L.normalizeEndDate(fd.get('endDate'), start);
+            const parts = L.cleanSmart(Object.fromEntries(L.SMART_FIELDS.map((f) => [f.key, fd.get(f.key)])));
+            fields.smart = { ...parts, plan: L.cleanPlan(planFromForm(fd)), endDate: end };
             fields.targetDays = L.smartLength(start, end);
           }
           await db.updateGoalDetails(state.user.uid, g.id, fields);
@@ -902,7 +1347,7 @@ function openGoalSettings(g) {
         try {
           await db.abandon(state.user.uid, g.id);
           close();
-          location.hash = '#/home';
+          location.hash = '#/journeys';
           toast('Journey closed and recorded', 'info');
         } catch (err) {
           toast(err.message, 'error');
@@ -918,7 +1363,7 @@ function openAccount() {
     title: 'Account',
     body: `
       <div class="account">
-        <div class="avatar">${u.photoURL ? `<img src="${esc(u.photoURL)}" alt="">` : icon('user')}</div>
+        <div class="avatar">${u.photoURL ? `<img src="${esc(u.photoURL)}" alt="">` : icon('user-round')}</div>
         <div><strong>${esc(u.displayName || 'Signed in')}</strong><small class="muted">${esc(u.email || '')}</small></div>
       </div>
       <div class="menu">
@@ -939,7 +1384,7 @@ async function checkin(goalId, date, answer) {
     const ok = await confirmDialog({
       title: av.ok ? 'Use an exception?' : 'Restart this journey?',
       message: av.ok
-        ? `This day is recorded as an exception. You have ${av.remaining} left and ${g.type === 'smart' ? 'the deadline moves out by one day' : 'the journey grows by one day'}.`
+        ? `This day is recorded as an exception. You have ${av.remaining} left and the journey grows by one day.`
         : `${av.reason === 'too_soon'
           ? `You missed again within ${L.policyFor(g).gapDays} days of your last exception.`
           : av.reason === 'not_allowed' ? 'Sankalpas have no exceptions.' : 'All exceptions are used.'}
@@ -962,6 +1407,40 @@ async function checkin(goalId, date, answer) {
     }
   } catch (err) {
     toast(err.message || 'Could not save. Check your connection.', 'error');
+  }
+}
+
+async function saveSmart(goalId, form) {
+  const g = state.goals.find((x) => x.id === goalId);
+  if (!g || !form) return;
+  const filled = [...form.querySelectorAll('[data-log-index]')].filter((i) => i.value.trim() !== '');
+  if (!filled.length) {
+    toast('Type a number first. Use 0 for nothing done.', 'error');
+    return;
+  }
+  const entries = filled.map((i) => ({
+    index: Number(i.dataset.logIndex),
+    date: i.dataset.logDate,
+    value: i.value.trim(),
+  }));
+  try {
+    const res = await db.saveSmartLog(state.user.uid, goalId, entries);
+    for (const k of Object.keys(state.drafts)) {
+      if (k.startsWith(`${goalId}|`)) delete state.drafts[k];
+    }
+    if (res.outcome === 'completed') celebrate(g.title);
+    else toast('Numbers saved', 'success');
+  } catch (err) {
+    toast(err.message || 'Could not save. Check your connection.', 'error');
+  }
+}
+
+// Journeys made before ordering existed get a position once, so the order is stable from then on.
+function ensureOrder() {
+  if (!state.user) return;
+  const active = sortedActive();
+  if (active.length && active.some((g) => !Number.isFinite(g.order))) {
+    db.saveOrder(state.user.uid, active.map((g) => g.id)).catch((err) => console.warn('Could not save order', err));
   }
 }
 
@@ -990,9 +1469,16 @@ function onViewClick(e) {
     switch (action) {
       case 'new': openCreate(); break;
       case 'checkin': checkin(act.dataset.goal, act.dataset.date, act.dataset.answer); break;
+      case 'smart-save': saveSmart(act.dataset.goal, act.closest('[data-smart-form]')); break;
       case 'goal-settings': openGoalSettings(state.goals.find((x) => x.id === act.dataset.goal)); break;
       case 'acc-tab': state.accTab = act.dataset.tab; render(); break;
       case 'redo': openRedo(state.goals.find((x) => x.id === act.dataset.goal)); break;
+      case 'redo-miss': openRedo(state.goals.find((x) => x.id === act.dataset.goal), { fromMiss: true }); break;
+      case 'day-pick':
+        state.pickDay[act.dataset.goal] = act.dataset.date;
+        render();
+        break;
+      case 'reorder': state.reorder = !state.reorder; render(); break;
       default: break;
     }
     return;
@@ -1001,6 +1487,14 @@ function onViewClick(e) {
   const cell = e.target.closest('.cell.is-active');
   document.querySelectorAll('.cell.open').forEach((c) => { if (c !== cell) c.classList.remove('open'); });
   if (cell) cell.classList.toggle('open');
+}
+
+// Keeps what the user has typed into a SMART number box, so the minute refresh does not wipe it.
+function onViewInput(e) {
+  const inp = e.target.closest?.('[data-log-index]');
+  if (!inp) return;
+  const form = inp.closest('[data-smart-form]');
+  state.drafts[`${form.dataset.goal}|${inp.dataset.logIndex}|${inp.dataset.logDate}`] = inp.value;
 }
 
 function onRailClick(e) {
@@ -1040,6 +1534,11 @@ async function resetAccount() {
 // ---------- render loop ----------
 
 function render() {
+  // Never rebuild the screen while a journey is being dragged: that would drop it.
+  if (state.dragging) {
+    state.renderPending = true;
+    return;
+  }
   if (!state.authReady) {
     $('#rail').hidden = true;
     view().innerHTML = `<div class="splash"><div class="brand-mark pulse">${icon('sparkles')}</div></div>`;
@@ -1059,10 +1558,12 @@ function render() {
   const routeKey = r.name === 'goal' ? `goal:${r.id}` : r.name;
   const changed = routeKey !== state.lastRouteKey;
   state.lastRouteKey = routeKey;
+  if (r.name !== 'home' && r.name !== 'journeys') state.reorder = false;
 
   let html;
   if (r.name === 'goal') html = viewGoal(r.id);
   else if (r.name === 'accomplishments') html = viewAccomplishments();
+  else if (r.name === 'journeys') html = viewJourneys();
   else html = viewHome();
 
   const v = view();
@@ -1077,6 +1578,11 @@ function render() {
 
 async function boot() {
   view().addEventListener('click', onViewClick);
+  view().addEventListener('input', onViewInput);
+  view().addEventListener('pointerdown', onDragDown);
+  window.addEventListener('pointermove', onDragMove);
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
   $('#rail').addEventListener('click', onRailClick);
   $('#modal-root').addEventListener('click', onModalRootClick);
   window.addEventListener('hashchange', render);
@@ -1114,7 +1620,7 @@ async function boot() {
     if (!unsubscribeGoals) {
       unsubscribeGoals = db.subscribeGoals(
         user.uid,
-        (goals) => { state.goals = goals; state.goalsReady = true; render(); },
+        (goals) => { state.goals = goals; state.goalsReady = true; ensureOrder(); render(); },
         (err) => toast(`Could not load your data: ${err.message}`, 'error'),
       );
     }
