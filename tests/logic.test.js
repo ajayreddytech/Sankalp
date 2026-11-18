@@ -266,3 +266,13 @@ test('only accomplished journeys can be redone', () => {
   const g = { id: 'a', ...newGoalData({ type: 'habit', title: 'Read', startDate: '2026-01-01', now: at('2026-01-01') }) };
   assert.throws(() => redoData(g, { startDate: '2026-02-01' }), /accomplished/);
 });
+
+test('optional details are stored, trimmed, and carried into a redo', () => {
+  const g = { id: 'd1', ...newGoalData({
+    type: 'habit', title: 'Read', startDate: '2026-01-01', now: at('2026-01-01'),
+    details: { what: '  10 pages  ', how: 'After tea', where: '', when: '9pm' },
+  }), status: 'completed' };
+  assert.deepEqual(g.details, { what: '10 pages', how: 'After tea', where: '', when: '9pm', more: '' });
+  const again = redoData(g, { startDate: '2026-03-01', now: at('2026-03-01') });
+  assert.deepEqual(again.details, g.details);
+});

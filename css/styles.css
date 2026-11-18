@@ -910,3 +910,11 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
 }
 .hex-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.2); }
 .hex-row .cpick-preview { width: 44px; height: 44px; flex-shrink: 0; }
+
+/* ---------- optional details ---------- */
+.more-details { margin: 0 0 18px; border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px; background: var(--surface); }
+.more-details summary { cursor: pointer; font-weight: 650; font-size: 14px; list-style: none; display: flex; align-items: center; gap: 8px; }
+.more-details summary::-webkit-details-marker { display: none; }
+.more-details summary svg, .more-details summary i { width: 18px; height: 18px; color: #c4b5fd; }
+.more-details[open] summary { margin-bottom: 14px; }
+.more-details .field:last-child { margin-bottom: 0; }

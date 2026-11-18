@@ -84,7 +84,7 @@ Constants live at the top of `js/logic.js` (`HABIT_DAYS`, `MAX_EXCEPTIONS`, `EXC
 ## Data safety
 
 - Every journey is one Firestore document: `users/{uid}/goals/{goalId}`. Each has `schemaVersion: 1`.
-- Failed and abandoned attempts are archived inside `history`, never deleted. Goals cannot be deleted through the rules.
+- Failed and abandoned attempts are archived inside `history`, never deleted. The app has no delete option for journeys.
 - Check-ins run in Firestore transactions, so two devices cannot double-apply a day.
 - **Export my data** (Account → Export) downloads a JSON backup. Do this before big updates.
 

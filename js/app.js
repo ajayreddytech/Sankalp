@@ -556,6 +556,7 @@ function viewGoal(id) {
       ${panel}
 
       ${g.type === 'smart' && g.smart ? smartPlanHTML(g) : ''}
+      ${detailsHTML(g)}
 
       <section class="block">
         <div class="block-head">
@@ -650,6 +651,45 @@ function showTypeFields(w, type) {
   if (label) label.textContent = type === 'smart' ? 'Goal' : 'Title';
 }
 
+const DETAIL_HINTS = {
+  what: 'What exactly you will do',
+  how: 'The steps or method you will use',
+  where: 'The place or tool you will use',
+  when: 'The time of day or schedule',
+  more: 'Anything else that matters to you',
+};
+
+// Optional detail boxes, folded away until the user opens them.
+function detailFieldsHTML(values = {}) {
+  const filled = Object.values(values).some(Boolean);
+  return `
+    <details class="more-details"${filled ? ' open' : ''}>
+      <summary>${icon('notebook-pen')} Add details: what, how, where, when</summary>
+      ${L.DETAIL_KEYS.map((k) => `
+        <label class="field"><span>${esc(L.DETAIL_LABELS[k])} <small class="muted">(optional)</small></span>
+          <textarea name="d_${k}" rows="2" maxlength="1000" placeholder="${esc(DETAIL_HINTS[k])}">${esc(values[k] || '')}</textarea></label>`).join('')}
+    </details>`;
+}
+
+function detailsFormValues(fd) {
+  return L.cleanDetails(Object.fromEntries(L.DETAIL_KEYS.map((k) => [k, fd.get('d_' + k)])));
+}
+
+function detailsHTML(g) {
+  const d = g.details || {};
+  const rows = L.DETAIL_KEYS.filter((k) => d[k]);
+  if (!rows.length) return '';
+  return `
+    <section class="block">
+      <div class="block-head"><h2>Details</h2></div>
+      <div class="smart-plan">${rows.map((k) => `
+        <div class="smart-item">
+          <span class="smart-k">${esc(L.DETAIL_LABELS[k])}</span>
+          <p>${esc(d[k])}</p>
+        </div>`).join('')}</div>
+    </section>`;
+}
+
 function smartFormValues(fd) {
   return Object.fromEntries(L.SMART_FIELDS.map((f) => [f.key, fd.get(f.key)]));
 }
@@ -694,6 +734,7 @@ function openCreate() {
       </div>
       <label class="field"><span>Why (optional)</span>
         <textarea name="why" rows="2" maxlength="500" placeholder="The reason this matters to you"></textarea></label>
+      ${detailFieldsHTML()}
       <div class="field"><span>Icon</span>${iconPicker('', { auto: true })}</div>
       <div class="field"><span>Color</span>${colorPicker(COLORS[0])}</div>
       <p class="error" data-error hidden></p>
@@ -722,6 +763,7 @@ function openCreate() {
             startDate: fd.get('startDate'),
             endDate: fd.get('endDate'),
             smart: smartFormValues(fd),
+            details: detailsFormValues(fd),
             icon: fd.get('icon'),
             color: fd.get('color'),
           });
@@ -803,16 +845,13 @@ function openGoalSettings(g) {
         ${smartFieldsHTML(g.smart || {})}` : ''}
       <label class="field"><span>Why</span>
         <textarea name="why" rows="2" maxlength="500">${esc(g.why)}</textarea></label>
+      ${detailFieldsHTML(g.details || {})}
       <div class="field"><span>Icon</span>${iconPicker(g.icon)}</div>
       <div class="field"><span>Color</span>${colorPicker(g.color)}</div>
       <p class="error" data-error hidden></p>
       <div class="danger-zone">
         <div><strong>Abandon this journey</strong><small class="muted">It moves to Not accomplished. Nothing is deleted.</small></div>
         <button type="button" class="btn danger sm" data-abandon>Abandon</button>
-      </div>
-      <div class="danger-zone">
-        <div><strong>Delete this journey</strong><small class="muted">Removes it and its whole history permanently.</small></div>
-        <button type="button" class="btn danger sm" data-delete>Delete</button>
       </div>
     </form>`;
   openModal({
@@ -836,6 +875,7 @@ function openGoalSettings(g) {
             icon: fd.get('icon') || g.icon,
             color: fd.get('color') || g.color,
           };
+          fields.details = detailsFormValues(fd);
           if (startEditable) fields.attemptStart = L.normalizeStartDate(fd.get('startDate'));
           if (g.type === 'smart') {
             const start = fields.attemptStart || g.attemptStart;
@@ -849,23 +889,6 @@ function openGoalSettings(g) {
         } catch (err) {
           errBox.textContent = err.message;
           errBox.hidden = false;
-        }
-      });
-      w.querySelector('[data-delete]').addEventListener('click', async () => {
-        const ok = await confirmDialog({
-          title: 'Delete this journey?',
-          message: `"${esc(g.title)}" and its whole history will be permanently deleted. This cannot be undone.`,
-          confirmLabel: 'Delete forever',
-          danger: true,
-        });
-        if (!ok) return;
-        try {
-          await db.deleteGoal(state.user.uid, g.id);
-          close();
-          location.hash = '#/home';
-          toast('Journey deleted', 'info');
-        } catch (err) {
-          toast(err.message, 'error');
         }
       });
       w.querySelector('[data-abandon]').addEventListener('click', async () => {
@@ -900,7 +923,6 @@ function openAccount() {
       </div>
       <div class="menu">
         <button class="menu-item" data-action="export">${icon('download')}<div><strong>Export my data</strong><small class="muted">Download everything as a JSON backup</small></div></button>
-        <button class="menu-item danger-text" data-action="delete-all">${icon('trash-2')}<div><strong>Delete all journeys</strong><small class="muted">Permanently removes every habit, sankalpa and SMART goal</small></div></button>
         <button class="menu-item danger-text" data-action="signout">${icon('log-out')}<div><strong>Sign out</strong><small class="muted">Your data stays safe in the cloud</small></div></button>
       </div>`,
   });
@@ -993,25 +1015,6 @@ function onModalRootClick(e) {
     db.logout().then(() => toast('Signed out'));
   }
   if (act.dataset.action === 'export') exportData();
-  if (act.dataset.action === 'delete-all') deleteAll();
-}
-
-async function deleteAll() {
-  const ok = await confirmDialog({
-    title: 'Delete all journeys?',
-    message: 'Every habit, sankalpa and SMART goal, with all of its history, will be permanently deleted. This cannot be undone.',
-    confirmLabel: 'Delete everything',
-    danger: true,
-  });
-  if (!ok) return;
-  try {
-    const count = await db.deleteAllGoals(state.user.uid);
-    document.querySelectorAll('.modal-backdrop').forEach((m) => m.remove());
-    location.hash = '#/home';
-    toast(`Deleted ${count} journey${count === 1 ? '' : 's'}`, 'info');
-  } catch (err) {
-    toast(err.message, 'error');
-  }
 }
 
 // ---------- render loop ----------

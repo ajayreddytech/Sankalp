@@ -13,6 +13,10 @@ export const TYPES = ['habit', 'sankalpa', 'smart'];
 export const TYPE_LABEL = { habit: 'Habit', sankalpa: 'Sankalpa', smart: 'SMART goal' };
 
 // The five parts of a SMART goal, in the order the user answers them.
+// Optional detail boxes on every journey type: what, how, where, when, and anything else.
+export const DETAIL_KEYS = ['what', 'how', 'where', 'when', 'more'];
+export const DETAIL_LABELS = { what: 'What', how: 'How', where: 'Where', when: 'When', more: 'More details' };
+
 export const SMART_FIELDS = [
   { key: 'specific', label: 'Specific', hint: 'What exactly will you do, and where or with whom?' },
   { key: 'measurable', label: 'Measurable', hint: 'How will you count or show progress? e.g. pages, km, rupees' },
@@ -142,8 +146,15 @@ export function cleanSmart(input = {}) {
   return out;
 }
 
+/** Trims the optional detail boxes. Missing boxes become empty strings. */
+export function cleanDetails(input = {}) {
+  const out = {};
+  for (const k of DETAIL_KEYS) out[k] = String(input[k] ?? '').trim().slice(0, 1000);
+  return out;
+}
+
 export function newGoalData({
-  type, title, why = '', days, endDate, smart, icon, color, startDate, redoOf = null, now = new Date(),
+  type, title, why = '', details, days, endDate, smart, icon, color, startDate, redoOf = null, now = new Date(),
 }) {
   const clean = String(title || '').trim();
   if (!clean) throw new Error(type === 'smart' ? 'Write your SMART goal.' : 'Give your habit or sankalpa a title.');
@@ -172,6 +183,7 @@ export function newGoalData({
     type,
     title: clean,
     why: String(why || '').trim().slice(0, 500),
+    details: cleanDetails(details),
     targetDays,
     smart: smartData,        // null unless type is 'smart'
     icon: icon || suggestIcon(clean, type),
@@ -209,6 +221,7 @@ export function redoData(goal, { startDate, days, endDate, now = new Date() } = 
     type: goal.type,
     title: goal.title,
     why: goal.why,
+    details: goal.details,
     days: goal.type === 'sankalpa' ? (days ?? goal.targetDays) : undefined,
     endDate: goal.type === 'smart' ? endDate : undefined,
     smart: goal.smart || undefined,
