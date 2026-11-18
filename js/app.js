@@ -239,14 +239,15 @@ function hsvToRgb(h, s, v) {
 function colorPicker(selected = COLORS[0]) {
   return `
     <div class="cpick" data-color-picker>
+      <div class="hex-row">
+        <input class="hex-input" data-hex-input type="text" maxlength="7" placeholder="#8B5CF6" spellcheck="false" autocomplete="off" aria-label="Colour code">
+        <span class="cpick-preview" data-preview></span>
+      </div>
       <input type="hidden" name="color" value="${esc(selected)}">
       <div class="sv" data-sv><span class="sv-dot" data-dot></span></div>
       <input class="hue" type="range" min="0" max="360" step="1" data-hue aria-label="Hue">
-      <div class="cpick-row">
-        <div class="sw-row">${COLORS.map((c) => `
-          <button type="button" class="sw" data-pick="${c}" style="--c:${c}" aria-label="Use ${c}"></button>`).join('')}</div>
-        <div class="cpick-now"><span class="cpick-preview" data-preview></span><code data-hex></code></div>
-      </div>
+      <div class="sw-row">${COLORS.map((c) => `
+        <button type="button" class="sw" data-pick="${c}" style="--c:${c}" aria-label="Use ${c}"></button>`).join('')}</div>
     </div>`;
 }
 
@@ -258,7 +259,7 @@ function wireColorPicker(root) {
   const dot = el.querySelector('[data-dot]');
   const hue = el.querySelector('[data-hue]');
   const preview = el.querySelector('[data-preview]');
-  const hex = el.querySelector('[data-hex]');
+  const hexIn = el.querySelector('[data-hex-input]');
   const clamp = (n) => Math.min(1, Math.max(0, n));
   let [h, s, v] = rgbToHsv(...hexToRgb(input.value));
 
@@ -271,8 +272,18 @@ function wireColorPicker(root) {
     dot.style.background = value;
     hue.value = Math.round(h);
     preview.style.background = value;
-    hex.textContent = value.toUpperCase();
+    if (document.activeElement !== hexIn) hexIn.value = value.toUpperCase();
   }
+
+  // Typing a full code (#RGB or #RRGGBB) selects that colour straight away.
+  hexIn.addEventListener('input', () => {
+    const m = hexIn.value.trim().replace(/^#?/, '#').match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (!m) return;
+    const digits = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+    [h, s, v] = rgbToHsv(...hexToRgb(`#${digits}`));
+    paint();
+  });
+  hexIn.addEventListener('blur', paint);
 
   const moveIn = (e) => {
     const r = sv.getBoundingClientRect();
@@ -284,6 +295,7 @@ function wireColorPicker(root) {
   sv.addEventListener('pointermove', (e) => { if (sv.hasPointerCapture(e.pointerId)) moveIn(e); });
   hue.addEventListener('input', () => { h = Number(hue.value); paint(); });
   el.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-pick]')) return;
     const b = e.target.closest('[data-pick]');
     if (!b) return;
     [h, s, v] = rgbToHsv(...hexToRgb(b.dataset.pick));
@@ -660,12 +672,11 @@ function openCreate() {
     <form id="create-form" class="form" novalidate>
       <div class="type-toggle three" role="radiogroup" aria-label="Type">
         <label class="type-card"><input type="radio" name="type" value="habit" checked>
-          ${icon('repeat')}<strong>Habit</strong><small>66 days</small></label>
+          ${icon('repeat')}<strong>Habit</strong></label>
         <label class="type-card"><input type="radio" name="type" value="sankalpa">
-          ${icon('scroll')}<strong>Sankalpa</strong><small>Your days, no misses</small></label>
-        <label class="type-card wide"><input type="radio" name="type" value="smart">
-          ${icon('target')}<strong>SMART goal</strong>
-          <span class="smart-chips"><span>Specific</span><span>Measurable</span><span>Actionable</span><span>Realistic</span><span>Time-bound</span></span></label>
+          ${icon('scroll')}<strong>Sankalpa</strong></label>
+        <label class="type-card"><input type="radio" name="type" value="smart">
+          ${icon('target')}<strong>SMART goal</strong></label>
       </div>
       <label class="field"><span data-title-label>Title</span>
         <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" required autocomplete="off"></label>

@@ -899,3 +899,14 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
 .cpick-now { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .cpick-preview { width: 30px; height: 30px; border-radius: 10px; border: 1px solid var(--line-strong); }
 .cpick-now code { font-size: 13px; color: var(--text); }
+
+/* ---------- colour code input, one-row type picker ---------- */
+.type-toggle.three .type-card { justify-items: center; text-align: center; padding: 16px 6px; }
+.type-toggle.three .type-card strong { font-size: 14px; }
+.hex-row { display: flex; align-items: center; gap: 10px; }
+.hex-input {
+  flex: 1; min-width: 0; background: #0b0b13; border: 1px solid var(--line-strong); border-radius: 14px;
+  padding: 11px 14px; font-size: 16px; font-family: ui-monospace, Menlo, Consolas, monospace; text-transform: uppercase; color: inherit;
+}
+.hex-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.2); }
+.hex-row .cpick-preview { width: 44px; height: 44px; flex-shrink: 0; }
