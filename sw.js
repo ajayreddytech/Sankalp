@@ -1,6 +1,6 @@
 // SANKALP service worker: caches the app shell so it opens instantly and works offline for viewing.
 // It never caches Firestore or Auth traffic, so your journey data always comes from the server.
-const VERSION = 'sankalp-v13';
+const VERSION = 'sankalp-v14';
 const SHELL = [
   '/',
   '/index.html',
@@ -8,6 +8,7 @@ const SHELL = [
   '/js/app.js',
   '/js/db.js',
   '/js/logic.js',
+  '/js/choices.js',
   '/js/config.js',
   '/manifest.webmanifest',
   '/icon.svg',

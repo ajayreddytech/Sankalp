@@ -1,46 +1,16 @@
 // SANKALP UI: routing, rendering and interactions.
 import * as db from './db.js';
 import * as L from './logic.js';
+import { ICON_GROUPS, COLOURS, DEFAULT_COLOUR } from './choices.js';
 
-// Every name here is checked against the Lucide build in index.html. The search box filters this list.
-const ICONS = [
-  'target', 'dumbbell', 'book-open', 'droplet', 'moon', 'sun', 'brain', 'heart', 'pen-line', 'leaf',
-  'flame', 'footprints', 'coffee', 'apple', 'ban', 'music', 'code', 'languages', 'piggy-bank', 'mountain',
-  'sparkles', 'zap', 'star', 'wallet',
-  'book-marked', 'bookmark', 'graduation-cap', 'school', 'pencil', 'pen', 'notebook', 'notebook-pen',
-  'scroll-text', 'file-text', 'library',
-  'bike', 'car', 'plane', 'mountain-snow', 'tent', 'trees', 'waves', 'sprout', 'flower', 'flower-2',
-  'bean', 'carrot', 'cherry', 'citrus', 'egg', 'fish', 'ham', 'beef', 'milk', 'cookie', 'cake',
-  'alarm-clock', 'timer', 'hourglass', 'calendar', 'calendar-check', 'clock', 'sunrise', 'sunset',
-  'cloud', 'cloud-sun', 'rainbow', 'umbrella',
-  'bed', 'bed-double', 'armchair', 'lamp', 'house', 'key-round', 'lock', 'shield', 'shield-check',
-  'activity', 'heart-pulse', 'stethoscope', 'pill', 'syringe', 'thermometer', 'hand-heart', 'smile', 'laugh',
-  'trophy', 'medal', 'crown', 'award', 'gem', 'diamond', 'rocket', 'compass', 'map-pin', 'globe',
-  'plane-takeoff', 'anchor',
-  'camera', 'image', 'palette', 'brush', 'paintbrush', 'film', 'clapperboard', 'headphones', 'mic',
-  'guitar', 'piano', 'drum', 'radio',
-  'gamepad-2', 'puzzle', 'dice-5', 'ticket',
-  'wrench', 'hammer', 'scissors', 'ruler', 'calculator', 'banknote', 'coins', 'circle-dollar-sign',
-  'receipt', 'briefcase',
-  'phone', 'smartphone', 'laptop', 'terminal', 'database', 'server', 'bug', 'git-branch',
-  'users', 'user-round', 'hand', 'handshake', 'message-circle', 'mail', 'send',
-  'eye', 'glasses', 'feather', 'infinity', 'orbit', 'atom', 'flask-conical', 'microscope', 'telescope',
-  'swords', 'shield-half', 'flag', 'bell', 'check-check', 'circle-check', 'repeat', 'rotate-ccw',
-];
-
-// Twenty pastel colours that glow on a dark background. The first one is the default.
-const PASTELS = [
-  { name: 'Mint', hex: '#A8E6CF' }, { name: 'Peach', hex: '#FFD3B6' }, { name: 'Coral', hex: '#FFAAA5' },
-  { name: 'Rose', hex: '#FF8B94' }, { name: 'Seafoam', hex: '#B5EAD7' }, { name: 'Periwinkle', hex: '#C7CEEA' },
-  { name: 'Lime', hex: '#E2F0CB' }, { name: 'Blush', hex: '#F6DFEB' }, { name: 'Spring', hex: '#B4F8C8' },
-  { name: 'Honey', hex: '#FFD98E' }, { name: 'Aqua', hex: '#A0E7E5' }, { name: 'Flamingo', hex: '#FFAEBC' },
-  { name: 'Lavender', hex: '#DCD3FF' }, { name: 'Sky', hex: '#AFCBFF' }, { name: 'Orchid', hex: '#F3C4FB' },
-  { name: 'Butter', hex: '#FFF1A8' }, { name: 'Lilac', hex: '#C5A3FF' }, { name: 'Teal', hex: '#9ED8DB' },
-  { name: 'Bubblegum', hex: '#FFB3DE' }, { name: 'Apricot', hex: '#F9D5A7' },
-];
-
+// What each kind of journey means, shown under its column so the three are easy to tell apart.
 const TYPE_PLURAL = { habit: 'Habits', sankalpa: 'Sankalpas', smart: 'SMART goals' };
 const TYPE_ICON = { habit: 'repeat', sankalpa: 'scroll', smart: 'target' };
+const TYPE_SUB = {
+  habit: '66 days in a row. Two exception days allowed.',
+  sankalpa: 'A vow for the number of days you choose. No exceptions.',
+  smart: 'A plan of measurable actions, logged each day toward a deadline.',
+};
 const OUTCOME_LABEL = { failed: 'Not kept', abandoned: 'Abandoned' };
 
 const state = {
@@ -66,6 +36,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
 const icon = (name, cls = '') => `<i data-lucide="${esc(name)}" class="${cls}" aria-hidden="true"></i>`;
+// Every form field is required unless it says otherwise, so each label carries this star.
+const REQ = '<b class="req" title="Required" aria-label="required">*</b>';
 const refreshIcons = () => window.lucide?.createIcons();
 
 function fmtDate(s) {
@@ -197,7 +169,7 @@ function dropdown({ kind, name, value, valueHTML, optionsHTML, search = false })
         <span class="dd-caret">${icon('chevron-down')}</span>
       </button>
       <div class="dd-panel" hidden>
-        ${search ? '<input class="dd-search" type="search" placeholder="Search icons, e.g. book, heart, moon" aria-label="Search icons" autocomplete="off">' : ''}
+        ${search ? '<input class="dd-search" type="search" placeholder="Search icons, e.g. pray, money, run, read" aria-label="Search icons" autocomplete="off">' : ''}
         <div class="dd-options" role="listbox">${optionsHTML}</div>
         ${search ? '<p class="muted dd-empty" hidden>No icon matches that search.</p>' : ''}
       </div>
@@ -205,31 +177,68 @@ function dropdown({ kind, name, value, valueHTML, optionsHTML, search = false })
 }
 
 // Icons: empty value means "Auto, from your title" when auto is true.
-function iconDropdown(selected = '', { auto = false } = {}) {
-  const names = !selected || ICONS.includes(selected) ? ICONS : [selected, ...ICONS];
-  const autoOn = auto && !selected;
-  const autoOpt = auto ? `
-    <button type="button" class="dd-opt wide${autoOn ? ' on' : ''}" data-dd-option data-value="" data-name="auto">
-      <span class="dd-face">${icon('wand-sparkles')}<span class="dd-name">Auto, From Your Title</span></span>
-    </button>` : '';
-  const opts = autoOpt + names.map((name) => `
-    <button type="button" class="dd-opt${name === selected ? ' on' : ''}" data-dd-option data-value="${esc(name)}" data-name="${esc(name)}" title="${esc(name)}">
+// The catalogue is shown in groups. An icon is listed once, in the first group it appears in.
+const AUTO_LABEL = 'Auto, from your title';
+
+function iconOptionHTML(name, tags, selected) {
+  return `
+    <button type="button" class="dd-opt${name === selected ? ' on' : ''}" data-dd-option data-value="${esc(name)}"
+      data-name="${esc(name)}" data-tags="${esc(tags)}" title="${esc(name)}">
       <span class="dd-face">${icon(name)}<span class="dd-name">${esc(name)}</span></span>
-    </button>`).join('');
-  const face = selected
-    ? `<span class="dd-face">${icon(selected)}<span class="dd-name">${esc(selected)}</span></span>`
-    : `<span class="dd-face">${icon('wand-sparkles')}<span class="dd-name">Auto, From Your Title</span></span>`;
-  return dropdown({ kind: 'icons', name: 'icon', value: autoOn ? '' : selected, valueHTML: face, optionsHTML: opts, search: true });
+    </button>`;
 }
 
-function colorDropdown(selected = PASTELS[0].hex) {
+function iconGroupsHTML(selected) {
+  const seen = new Set();
+  const groups = ICON_GROUPS.map((group) => {
+    const fresh = group.icons.filter(([name]) => !seen.has(name));
+    fresh.forEach(([name]) => seen.add(name));
+    if (!fresh.length) return '';
+    return `<p class="dd-group">${esc(group.name)}</p>
+      <div class="dd-group-grid">${fresh.map(([name, tags]) => iconOptionHTML(name, tags, selected)).join('')}</div>`;
+  });
+  // An icon from an older version that is not in the catalogue still shows, so it can be kept.
+  if (selected && !seen.has(selected)) {
+    groups.unshift(`<p class="dd-group">Current</p><div class="dd-group-grid">${iconOptionHTML(selected, '', selected)}</div>`);
+  }
+  return groups.join('');
+}
+
+function iconDropdown(selected = '', { auto = false } = {}) {
+  const autoOn = auto && !selected;
+  const autoOpt = auto ? `
+    <button type="button" class="dd-opt wide${autoOn ? ' on' : ''}" data-dd-option data-value="" data-name="auto" data-tags="auto suggested">
+      <span class="dd-face">${icon('wand-sparkles')}<span class="dd-name">${AUTO_LABEL}</span></span>
+    </button>` : '';
+  const face = selected
+    ? `<span class="dd-face">${icon(selected)}<span class="dd-name">${esc(selected)}</span></span>`
+    : `<span class="dd-face">${icon('wand-sparkles')}<span class="dd-name">${AUTO_LABEL}</span></span>`;
+  return dropdown({
+    kind: 'icons', name: 'icon', value: autoOn ? '' : selected, valueHTML: face,
+    optionsHTML: autoOpt + iconGroupsHTML(selected), search: true,
+  });
+}
+
+// Shows which icon Auto will pick, from the title typed so far.
+function syncAutoIcon(w) {
+  const dd = w.querySelector('[data-dd].icons');
+  if (!dd || dd.querySelector('input[type="hidden"]').value !== '') return;
+  const title = w.querySelector('[name="title"]')?.value || '';
+  const type = w.querySelector('input[name="type"]:checked')?.value || 'habit';
+  const name = L.suggestIcon(title, type);
+  dd.querySelector('.dd-value').innerHTML = `<span class="dd-face">${icon(name)}<span class="dd-name">${AUTO_LABEL}: ${esc(name)}</span></span>`;
+  refreshIcons();
+}
+
+// Colours: thirty distinct swatches. Each one shows its name.
+function colorDropdown(selected = DEFAULT_COLOUR) {
   const sel = String(selected).toUpperCase();
-  const known = PASTELS.some((p) => p.hex.toUpperCase() === sel);
-  const list = known ? PASTELS : [{ name: 'Current Colour', hex: selected }, ...PASTELS];
+  const known = COLOURS.some((p) => p.hex.toUpperCase() === sel);
+  const list = known ? COLOURS : [{ name: 'Current colour', hex: selected }, ...COLOURS];
   const current = list.find((p) => p.hex.toUpperCase() === sel) || list[0];
   const face = (p) => `<span class="dd-face"><i class="dd-dot" style="--c:${p.hex}"></i><span class="dd-name">${esc(p.name)}</span></span>`;
   const opts = list.map((p) => `
-    <button type="button" class="dd-opt wide${p.hex.toUpperCase() === sel ? ' on' : ''}" data-dd-option data-value="${p.hex}">${face(p)}</button>`).join('');
+    <button type="button" class="dd-opt colour${p.hex.toUpperCase() === sel ? ' on' : ''}" data-dd-option data-value="${p.hex}" title="${esc(p.name)}">${face(p)}</button>`).join('');
   return dropdown({ kind: 'colors', name: 'color', value: current.hex, valueHTML: face(current), optionsHTML: opts });
 }
 
@@ -266,16 +275,23 @@ function wireDropdowns(root) {
   // Moving to another field closes the dropdown.
   root.addEventListener('focusin', (e) => closeAll(e.target.closest('[data-dd]')));
 
+  // Every word typed must appear in the icon's name or its search words. Empty groups hide with their icons.
   root.addEventListener('input', (e) => {
     if (!e.target.matches('.dd-search')) return;
-    const q = e.target.value.trim().toLowerCase().replace(/\s+/g, '-');
+    const terms = e.target.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const panel = e.target.closest('.dd-panel');
     let shown = 0;
-    panel.querySelectorAll('[data-dd-option]').forEach((o) => {
-      const isAuto = o.dataset.name === 'auto';
-      const ok = isAuto || !q || (o.dataset.name || '').includes(q);
-      o.hidden = !ok;
-      if (ok && !isAuto) shown++;
+    panel.querySelectorAll('.dd-group-grid').forEach((grid) => {
+      let any = false;
+      grid.querySelectorAll('[data-dd-option]').forEach((o) => {
+        const hay = `${o.dataset.name} ${o.dataset.tags || ''}`.toLowerCase();
+        const ok = terms.every((t) => hay.includes(t));
+        o.hidden = !ok;
+        if (ok) { any = true; shown++; }
+      });
+      grid.hidden = !any;
+      const head = grid.previousElementSibling;
+      if (head?.classList.contains('dd-group')) head.hidden = !any;
     });
     panel.querySelector('.dd-empty').hidden = shown > 0;
   });
@@ -379,26 +395,31 @@ function autoScroll() {
   drag.raf = requestAnimationFrame(autoScroll);
 }
 
+// A journey moves only within its own type column. The other types keep their places in the shared order.
 async function endDrag() {
   if (drag.pending) drag.pending = null;
   if (!drag.el) return;
   cancelAnimationFrame(drag.raf);
   const container = drag.el.parentElement;
+  const movedId = drag.el.dataset.id;
   drag.el.classList.remove('drag-source');
   drag.ghost?.remove();
   drag.ghost = null;
   document.body.classList.remove('is-dragging');
-  const ids = [...container.querySelectorAll('.drag-item')].map((n) => n.dataset.id);
+  const typeIds = [...container.querySelectorAll('.drag-item')].map((n) => n.dataset.id);
   drag.el = null;
   state.dragging = false;
 
+  const byId = new Map(state.goals.map((g) => [g.id, g]));
+  const type = byId.get(movedId)?.type;
   const current = sortedActive().map((g) => g.id);
-  if (ids.join('|') !== current.join('|')) {
-    const byId = new Map(state.goals.map((g) => [g.id, g]));
-    ids.forEach((id, k) => { const g = byId.get(id); if (g) g.order = k; });
+  let k = 0;
+  const merged = current.map((id) => (byId.get(id)?.type === type && k < typeIds.length ? typeIds[k++] : id));
+  if (merged.join('|') !== current.join('|')) {
+    merged.forEach((id, pos) => { const g = byId.get(id); if (g) g.order = pos; });
     render();
     try {
-      await db.saveOrder(state.user.uid, ids);
+      await db.saveOrder(state.user.uid, merged);
     } catch (err) {
       toast(err.message || 'Could not save the order.', 'error');
     }
@@ -496,12 +517,9 @@ function goalCard(g, today) {
     </a>`;
 }
 
-// The reorder list: every journey as a card you can drag. Same order on both screens.
-function dragListHTML(list, today) {
-  return `
-    <div class="goal-grid drag-list" data-drag-list>
-      ${list.map((g) => `<div class="goal-card drag-item" data-id="${esc(g.id)}" style="--c:${g.color}">${goalInner(g, today)}</div>`).join('')}
-    </div>`;
+// A journey card you can drag in reorder mode. It sits in its type's column.
+function dragCardHTML(g, today) {
+  return `<div class="goal-card drag-item" data-id="${esc(g.id)}" style="--c:${g.color}">${goalInner(g, today)}</div>`;
 }
 
 // SMART log for one day: one number box per plan item. Defaults to the open day.
@@ -611,13 +629,16 @@ function viewHome() {
   } else if (state.reorder) {
     body = `
       <section class="block">
-        <p class="muted hint">Drag a journey to a new place. Your Journeys shows the same order.</p>
-        ${dragListHTML(active, today)}
+        <p class="muted hint">Drag a journey up or down inside its column. Each type keeps its own column. Your Journeys shows the same order.</p>
+        ${typeColumns(active, (g) => dragCardHTML(g, today), (t) => `No ${TYPE_PLURAL[t].toLowerCase()} to reorder.`,
+          { listClass: 'drag-list', listAttrs: 'data-drag-list' })}
       </section>`;
-  } else if (!due.length) {
-    body = `<div class="all-clear">${icon('circle-check')}<span>All caught up. Nothing needs a check-in right now.</span></div>`;
   } else {
-    body = `<section class="block"><div class="due-list">${due.map((g) => checkRowHTML(g, today)).join('')}</div></section>`;
+    body = `
+      ${!due.length ? `<div class="all-clear">${icon('circle-check')}<span>All caught up. Nothing needs a check-in right now.</span></div>` : ''}
+      <section class="block">
+        ${typeColumns(due, (g) => checkRowHTML(g, today), 'Nothing to check in.')}
+      </section>`;
   }
 
   return `
@@ -643,7 +664,7 @@ function viewJourneys() {
   const today = L.todayStr();
   const active = sortedActive();
   const list = active.length
-    ? `<div class="goal-grid">${active.map((g) => goalCard(g, today)).join('')}</div>`
+    ? typeColumns(active, (g) => goalCard(g, today), (t) => `No ${TYPE_PLURAL[t].toLowerCase()} yet.`)
     : `<div class="empty small">
         <div class="empty-orb">${icon('sprout')}</div>
         <h3>No journeys yet</h3>
@@ -940,16 +961,19 @@ function viewGoal(id) {
   return g.type === 'smart' && g.smart ? viewSmartGoal(g, today) : viewHabitGoal(g, today);
 }
 
-// Three columns on a wide screen, one stack on a phone. Each column is one type.
-function typeColumns(items, renderCard, emptyText) {
+// Three columns on a wide screen, one stack on a phone. Each column is one type, with what that type means underneath.
+// emptyFor is the text for an empty column: a string, or a function of the type.
+function typeColumns(items, renderCard, emptyFor, { listClass = '', listAttrs = '' } = {}) {
   return `<div class="type-cols">${L.TYPES.map((type) => {
     const list = items.filter((x) => x.type === type);
+    const empty = typeof emptyFor === 'function' ? emptyFor(type) : emptyFor;
     return `
       <section class="type-col" data-type="${type}">
         <header class="type-col-head">${icon(TYPE_ICON[type])}<span>${TYPE_PLURAL[type]}</span><b>${list.length}</b></header>
+        <p class="type-col-sub">${esc(TYPE_SUB[type])}</p>
         ${list.length
-          ? `<div class="type-col-list">${list.map(renderCard).join('')}</div>`
-          : `<p class="muted type-col-empty">${esc(emptyText)}</p>`}
+          ? `<div class="type-col-list ${listClass}" ${listAttrs}>${list.map(renderCard).join('')}</div>`
+          : `<p class="muted type-col-empty">${esc(empty)}</p>`}
       </section>`;
   }).join('')}</div>`;
 }
@@ -1021,21 +1045,21 @@ function smartPlanHTML(g) {
 function smartFieldsHTML(values = {}) {
   return L.SMART_FIELDS.map((f) => `
     <label class="field">
-      <span>${esc(f.label)}</span>
+      <span>${esc(f.label)} ${REQ}</span>
       <small class="muted field-hint">${esc(f.hint)}</small>
-      <textarea name="${f.key}" rows="2" maxlength="500">${esc(values[f.key] || '')}</textarea>
+      <textarea name="${f.key}" rows="2" maxlength="500" required>${esc(values[f.key] || '')}</textarea>
     </label>`).join('');
 }
 
 function descriptionFieldHTML(value = '') {
   return `
-    <label class="field"><span>Description <small class="muted">(optional)</small></span>
-      <textarea name="description" rows="2" maxlength="1000" placeholder="What this is, in a sentence or two">${esc(value)}</textarea></label>`;
+    <label class="field"><span>Description ${REQ}</span>
+      <textarea name="description" rows="2" maxlength="1000" required placeholder="What this is, in a sentence or two">${esc(value)}</textarea></label>`;
 }
 
 function whyFieldHTML(value = '') {
   return `
-    <label class="field"><span>Why <small class="muted">(required)</small></span>
+    <label class="field"><span>Why ${REQ}</span>
       <textarea name="why" rows="2" maxlength="500" required placeholder="The reason this matters to you">${esc(value)}</textarea></label>`;
 }
 
@@ -1058,7 +1082,7 @@ function planRowHTML(row = {}) {
 function planHTML(rows = []) {
   return `
     <div class="field plan-field">
-      <span>Plan: actionable and measurable</span>
+      <span>Plan: actionable and measurable ${REQ}</span>
       <p class="muted field-hint">Left: what you will do. Right: how much, per day or per week. Add one row for each action.</p>
       <div class="plan" data-plan>
         <div class="plan-head" aria-hidden="true"><span>Actionable</span><span>Measurable</span></div>
@@ -1114,7 +1138,7 @@ function updateEndHint(form) {
   const start = form.querySelector('[name="startDate"]').value;
   const days = Math.floor(Number(form.querySelector('[name="days"]').value));
   const end = form.querySelector('[name="endDate"]').value;
-  let text = 'Leave the deadline empty to use the days.';
+  let text = 'Give a deadline, or leave it empty and give the days.';
   if (end) text = `Deadline set to ${fmtDate(end)}.`;
   else if (start && days > 0) text = `Ends on ${fmtDate(L.addDays(start, days - 1))}.`;
   hint.textContent = text;
@@ -1137,23 +1161,23 @@ function openCreate() {
       ${descriptionFieldHTML()}
       ${whyFieldHTML()}
       <div class="field-row">
-        <label class="field"><span>Start date</span>
-          <input name="startDate" type="date" value="${today}"></label>
-        <label class="field" data-only="sankalpa smart" hidden><span>Days</span>
+        <label class="field"><span>Start date ${REQ}</span>
+          <input name="startDate" type="date" value="${today}" required></label>
+        <label class="field" data-only="sankalpa smart" hidden><span>Days ${REQ}</span>
           <input name="days" type="number" min="1" max="365" inputmode="numeric" placeholder="e.g. 30"></label>
       </div>
       <div class="field-row" data-only="smart" hidden>
-        <label class="field"><span>Deadline <small class="muted">(optional)</small></span>
+        <label class="field"><span>Deadline ${REQ}</span>
           <input name="endDate" type="date"></label>
-        <p class="muted form-hint end-hint" data-end-hint>Leave the deadline empty to use the days.</p>
+        <p class="muted form-hint end-hint" data-end-hint>Give a deadline, or leave it empty and give the days.</p>
       </div>
       <div data-only="smart" hidden>
         <p class="muted form-hint">${icon('target')} Describe the goal, then build the plan. You log your numbers every day.</p>
         ${smartFieldsHTML()}
         ${planHTML([])}
       </div>
-      <div class="field"><span>Icon</span>${iconDropdown('', { auto: true })}</div>
-      <div class="field"><span>Colour</span>${colorDropdown(PASTELS[0].hex)}</div>
+      <div class="field"><span>Icon ${REQ}</span>${iconDropdown('', { auto: true })}</div>
+      <div class="field"><span>Colour ${REQ}</span>${colorDropdown(DEFAULT_COLOUR)}</div>
       <p class="error" data-error hidden></p>
     </form>`;
   const footer = `<button class="btn ghost" data-close>Cancel</button><button class="btn primary" form="create-form" type="submit">Start journey</button>`;
@@ -1168,8 +1192,15 @@ function openCreate() {
       wirePlan(w);
       form.addEventListener('change', (e) => {
         if (e.target.name === 'type') showTypeFields(w, e.target.value);
+        syncAutoIcon(w);
       });
-      form.addEventListener('input', () => updateEndHint(form));
+      form.addEventListener('input', () => {
+        updateEndHint(form);
+        syncAutoIcon(w);
+      });
+      // Picking Auto again shows its suggestion straight away.
+      w.addEventListener('click', (e) => { if (e.target.closest('[data-dd-option]')) syncAutoIcon(w); });
+      syncAutoIcon(w);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         errBox.hidden = true;
@@ -1211,11 +1242,11 @@ function openRedo(g, { fromMiss = false } = {}) {
       <p class="muted">${esc(g.title)} starts again as a new ${esc(typeName(g).toLowerCase())}. The accomplished record stays where it is.</p>
       ${descriptionFieldHTML(d.description)}
       ${whyFieldHTML(d.why)}
-      <label class="field"><span>Start date</span>
+      <label class="field"><span>Start date ${REQ}</span>
         <input name="startDate" type="date" value="${d.startDate}" required></label>
-      ${g.type === 'sankalpa' ? `<label class="field"><span>Days</span>
-        <input name="days" type="number" min="1" max="365" inputmode="numeric" value="${d.days}"></label>` : ''}
-      ${g.type === 'smart' ? `<label class="field"><span>Deadline</span>
+      ${g.type === 'sankalpa' ? `<label class="field"><span>Days ${REQ}</span>
+        <input name="days" type="number" min="1" max="365" inputmode="numeric" value="${d.days}" required></label>` : ''}
+      ${g.type === 'smart' ? `<label class="field"><span>Deadline ${REQ}</span>
         <input name="endDate" type="date" value="${d.endDate}" required></label>` : ''}
       ${g.type === 'habit' ? `<p class="muted form-hint">A habit is always ${L.HABIT_DAYS} days.</p>` : ''}
       <p class="error" data-error hidden></p>
@@ -1264,28 +1295,28 @@ function openGoalSettings(g) {
   // SMART goals keep their numbers by date, so their dates and plan stay editable.
   const startEditable = isSmart || (g.status === 'active' && !hasCheckins);
   const lengthField = g.type === 'habit' ? '' : `
-    <label class="field"><span>Days</span>
+    <label class="field"><span>Days ${REQ}</span>
       <input name="days" type="number" min="1" max="365" inputmode="numeric" value="${g.targetDays}"></label>`;
 
   const body = `
     <form id="edit-form" class="form" novalidate>
-      <label class="field"><span>${esc(L.TYPE_LABEL[g.type] || 'Habit')}</span>
+      <label class="field"><span>${esc(L.TYPE_LABEL[g.type] || 'Habit')} ${REQ}</span>
         <input name="title" maxlength="80" required value="${esc(g.title)}"></label>
       ${descriptionFieldHTML(g.description || '')}
       ${whyFieldHTML(g.why || '')}
       <div class="field-row">
-        <label class="field"><span>Start date${startEditable ? '' : ' (locked after the first check-in)'}</span>
+        <label class="field"><span>Start date ${REQ}${startEditable ? '' : ' <small class="muted">(locked after the first check-in)</small>'}</span>
           <input name="startDate" type="date" value="${esc(g.attemptStart)}" ${startEditable ? '' : 'disabled'}></label>
         ${g.type === 'habit' ? '' : lengthField}
       </div>
       ${isSmart ? `
-        <label class="field"><span>Deadline</span>
+        <label class="field"><span>Deadline ${REQ}</span>
           <input name="endDate" type="date" value="${esc(g.smart.endDate)}"></label>
         <p class="muted form-hint">If you change the days, the deadline follows them. Otherwise the deadline is used.</p>
         ${smartFieldsHTML(g.smart)}
         ${planHTML(g.smart.plan || [])}` : ''}
-      <div class="field"><span>Icon</span>${iconDropdown(g.icon)}</div>
-      <div class="field"><span>Colour</span>${colorDropdown(g.color)}</div>
+      <div class="field"><span>Icon ${REQ}</span>${iconDropdown(g.icon)}</div>
+      <div class="field"><span>Colour ${REQ}</span>${colorDropdown(g.color)}</div>
       <p class="error" data-error hidden></p>
       <div class="danger-zone">
         <div><strong>Abandon this journey</strong><small class="muted">It moves to Not accomplished. Nothing is deleted.</small></div>

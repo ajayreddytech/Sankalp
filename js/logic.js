@@ -61,27 +61,61 @@ export function diffDays(a, b) {
 
 // ---------- icon selection ----------
 
-// The first matching rule wins, so more specific rules come first.
+// Keyword rules for the Auto icon. The first matching rule wins, so specific words come first.
+// Every icon named here must exist in ICON_GROUPS in js/choices.js (a test checks this).
 const ICON_RULES = [
-  [/\b(read|reading|book|books|study|studying|learn|pages?)\b/i, 'book-open'],
-  [/\b(gym|workout|exercise|lift|weights?|push-?ups?|squats?|strength|fitness)\b/i, 'dumbbell'],
-  [/\b(run|running|jog|jogging|walk|walking|steps?|hike|hiking|cycle|cycling)\b/i, 'footprints'],
-  [/\b(water|drink|hydrat\w*)\b/i, 'droplet'],
-  [/\b(sleep|sleeping|bed|bedtime|night)\b/i, 'moon'],
-  [/\b(meditat\w*|mindful\w*|breath\w*|calm|yoga)\b/i, 'brain'],
-  [/\b(pray\w*|prayer|temple|worship|gratitude|grateful|faith|god)\b/i, 'heart'],
-  [/\b(wake|wakeup|early|morning|sunrise|sun)\b/i, 'sun'],
-  [/\b(write|writing|journal\w*|diary|blog|essay)\b/i, 'pen-line'],
-  [/\b(diet|healthy|eat\w*|food|fruits?|vegetables?|veggies?|salad|protein|meals?|cook\w*)\b/i, 'apple'],
+  [/\b(languages?|english|hindi|spanish|french|german|japanese|chinese|vocabulary|vocab)\b/i, 'languages'],
+  [/\b(read|reading|book|books|novel|chapters?|pages?)\b/i, 'book-open'],
+  [/\b(study|studying|learn|learning|course|lecture|revise|revision|exams?)\b/i, 'graduation-cap'],
+  [/\b(gym|workout|exercise|lift|lifting|weights?|push-?ups?|squats?|strength|fitness|training)\b/i, 'dumbbell'],
+  [/\b(run|running|jog|jogging|walk|walking|steps?|hike|hiking)\b/i, 'footprints'],
+  [/\b(cycle|cycling|bike|biking|ride|riding)\b/i, 'bike'],
+  [/\b(swim|swimming|pool)\b/i, 'waves'],
+  [/\b(yoga|stretch\w*)\b/i, 'person-standing'],
+  [/\b(meditat\w*|mindful\w*|breath\w*|calm|silence|silent)\b/i, 'brain'],
+  [/\b(water|hydrat\w*)\b/i, 'droplet'],
   [/\b(coffee|tea|chai)\b/i, 'coffee'],
+  [/\b(drink|drinks)\b/i, 'glass-water'],
+  [/\b(sleep|sleeping|bedtime|bed|nap|rest)\b/i, 'moon'],
+  [/\b(wake|wakeup|early|morning|sunrise|dawn)\b/i, 'sunrise'],
+  [/\b(pray\w*|prayer|temple|church|worship|bible|quran|gita|scripture)\b/i, 'church'],
+  [/\b(gratitude|grateful|thank\w*)\b/i, 'heart'],
+  [/\b(kindness|kind|love|compassion|hug|hugs)\b/i, 'hand-heart'],
+  [/\b(write|writing|blog|essay|story|poem|poetry)\b/i, 'pen-line'],
+  [/\b(journal\w*|diary|notes?)\b/i, 'notebook-pen'],
   [/\b(quit|stop|avoid|no|smoking|smoke|cigarettes?|alcohol|sugar|junk|gaming)\b/i, 'ban'],
-  [/\b(music|guitar|piano|sing\w*|instrument|violin|drums?)\b/i, 'music'],
-  [/\b(code|coding|program\w*|develop\w*|software|python|javascript|project)\b/i, 'code'],
-  [/\b(english|hindi|spanish|french|german|language|languages|vocabulary|words)\b/i, 'languages'],
-  [/\b(save|saving|money|budget|spend\w*|invest\w*|expenses?)\b/i, 'piggy-bank'],
-  [/\b(garden\w*|plant\w*|trees?|nature|outdoors?|green)\b/i, 'leaf'],
-  [/\b(focus|deep work|work|career|goals?)\b/i, 'target'],
-  [/\b(sankalp\w*|vow|commit\w*|discipline)\b/i, 'mountain'],
+  [/\b(cook\w*|recipes?)\b/i, 'chef-hat'],
+  [/\b(diet|healthy|eat\w*|food|meals?|salad)\b/i, 'salad'],
+  [/\b(fruits?)\b/i, 'apple'],
+  [/\b(vegetables?|veggies?)\b/i, 'carrot'],
+  [/\b(protein|eggs?)\b/i, 'egg'],
+  [/\b(music|sing|singing|song|songs)\b/i, 'music'],
+  [/\b(guitar)\b/i, 'guitar'],
+  [/\b(piano)\b/i, 'piano'],
+  [/\b(drums?)\b/i, 'drum'],
+  [/\b(paint\w*|draw\w*|sketch\w*|art|artist)\b/i, 'palette'],
+  [/\b(photo\w*|camera)\b/i, 'camera'],
+  [/\b(film|films|movies?|cinema)\b/i, 'clapperboard'],
+  [/\b(code|coding|program\w*|develop\w*|software|python|javascript|github|project)\b/i, 'code'],
+  [/\b(save|saving|money|budget\w*|spend\w*|expenses?)\b/i, 'piggy-bank'],
+  [/\b(invest\w*|stocks?)\b/i, 'chart-line'],
+  [/\b(income|salary|earn\w*)\b/i, 'circle-dollar-sign'],
+  [/\b(garden\w*|plant\w*|trees?|nature|outdoors?|green|eco)\b/i, 'leaf'],
+  [/\b(travel\w*|trip|flight|plane)\b/i, 'plane'],
+  [/\b(phone|screen|social|digital|laptop|computer)\b/i, 'smartphone'],
+  [/\b(focus|concentrat\w*)\b/i, 'focus'],
+  [/\b(work|career|job|office|promotion|interview|resume)\b/i, 'briefcase'],
+  [/\b(call|talk|speak|conversation|chat)\b/i, 'message-circle'],
+  [/\b(friends?|family|parents?|mom|mum|dad|kids?|partner|relationship)\b/i, 'users'],
+  [/\b(clean\w*|tidy|declutter|laundry|chores?)\b/i, 'brush'],
+  [/\b(house|home)\b/i, 'house'],
+  [/\b(smile|smiling|happy|happiness|joy)\b/i, 'smile'],
+  [/\b(games?|gaming|play)\b/i, 'gamepad-2'],
+  [/\b(sun|sunlight)\b/i, 'sun'],
+  [/\b(sankalp\w*|vow|commit\w*|discipline|consisten\w*)\b/i, 'mountain'],
+  [/\b(goals?|aim|achieve\w*|target|milestone)\b/i, 'target'],
+  [/\b(timer|pomodoro|minutes?)\b/i, 'timer'],
+  [/\b(daily|routine|everyday)\b/i, 'repeat'],
 ];
 
 /** Picks the best icon from the title. The user never has to choose one at creation. */
@@ -91,7 +125,7 @@ export function suggestIcon(title, type = 'habit') {
   }
   if (type === 'sankalpa') return 'mountain';
   if (type === 'smart') return 'target';
-  return 'sparkles';
+  return 'repeat';
 }
 
 // ---------- rules per type ----------
@@ -216,8 +250,11 @@ export function requireWhy(value) {
   return why.slice(0, 500);
 }
 
+/** Every journey needs a description too. Everything is required by default. */
 export function cleanDescription(value) {
-  return titleCase(String(value ?? '').trim()).slice(0, 1000);
+  const text = titleCase(String(value ?? '').trim()).slice(0, 1000);
+  if (!text) throw new Error('Write a short description.');
+  return text;
 }
 
 /** Next position for a new journey, after every existing one. */
@@ -235,7 +272,7 @@ export function sortByOrder(goals) {
 }
 
 export function newGoalData({
-  type, title, description = '', why, days, endDate, smart, icon, color, startDate, order = null,
+  type, title, description, why, days, endDate, smart, icon, color, startDate, order = null,
   redoOf = null, now = new Date(),
 }) {
   const clean = titleCase(String(title || '').trim());
@@ -274,7 +311,7 @@ export function newGoalData({
     targetDays,
     smart: smartData,        // null unless type is 'smart'
     icon: icon || suggestIcon(clean, type),
-    color: color || '#A8E6CF',
+    color: color || '#14B8A6',
     status: 'active',
     attempt: 1,
     attemptStart: start,

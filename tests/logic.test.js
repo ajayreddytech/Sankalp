@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { ICON_NAMES, COLOURS, ICON_GROUPS } from '../js/choices.js';
 import {
   newGoalData, applyCheckin, applyAbandon, journey, totalCells, addDays, diffDays, notAccomplished, accomplished,
   suggestIcon, redoData, redoDefaults, exceptionAvailability, cleanPlan, resolveSmartEnd, smartProgress, titleCase,
@@ -7,6 +8,7 @@ import {
 } from '../js/logic.js';
 
 const WHY = 'It makes me feel steady';
+const DESC = 'A short line about it';
 
 test('icon is chosen automatically from the title', () => {
   assert.equal(suggestIcon('Read 10 pages'), 'book-open');
@@ -14,17 +16,38 @@ test('icon is chosen automatically from the title', () => {
   assert.equal(suggestIcon('Drink 3 litres of water'), 'droplet');
   assert.equal(suggestIcon('No sugar'), 'ban');
   assert.equal(suggestIcon('Walk 8000 steps', 'sankalpa'), 'footprints');
-  assert.equal(suggestIcon('Something unusual'), 'sparkles');
+  assert.equal(suggestIcon('Something unusual'), 'repeat');
   assert.equal(suggestIcon('Something unusual', 'sankalpa'), 'mountain');
-  assert.equal(newGoalData({ type: 'habit', title: 'Meditate every morning', why: WHY }).icon, 'brain');
-  assert.equal(newGoalData({ type: 'habit', title: 'Meditate', why: WHY, icon: 'star' }).icon, 'star');
+  assert.equal(suggestIcon('Something unusual', 'smart'), 'target');
+  assert.equal(newGoalData({ type: 'habit', title: 'Meditate every morning', why: WHY, description: DESC }).icon, 'brain');
+  assert.equal(newGoalData({ type: 'habit', title: 'Meditate', why: WHY, description: DESC, icon: 'star' }).icon, 'star');
+});
+
+test('auto icon picks the personal-development area a title is about', () => {
+  assert.equal(suggestIcon('Learn Spanish'), 'languages');
+  assert.equal(suggestIcon('Pray every day'), 'church');
+  assert.equal(suggestIcon('Save 500 a month'), 'piggy-bank');
+  assert.equal(suggestIcon('Call my mum'), 'message-circle');
+  assert.equal(suggestIcon('Practise guitar'), 'guitar');
+  assert.equal(suggestIcon('Cook a healthy meal'), 'chef-hat');
+  assert.equal(suggestIcon('Write a journal entry'), 'pen-line');
+  assert.equal(suggestIcon('Phone-free evening'), 'smartphone');
+});
+
+test('every icon the auto rules can pick exists in the icon catalogue', () => {
+  const catalogue = new Set(ICON_NAMES);
+  for (const title of ['Learn Spanish', 'Pray', 'Save money', 'Call mum', 'Guitar', 'Cook', 'Journal', 'Phone', 'Gym', 'Run', 'Drink water', 'Sleep early', 'Walk', 'Kindness', 'Clean the flat', 'Travel', 'Work', 'Focus', 'Sun', 'Timer', 'Game', 'Daily', 'Smile', 'Goal', 'No sugar', 'Read', 'Study', 'Music', 'Coffee', 'Tea', 'Fruit', 'Vegetables', 'Egg', 'Meditate', 'Swim', 'Yoga', 'Invest', 'Income', 'Garden', 'Family', 'Partner', 'Movie', 'Paint', 'Photo', 'Code', 'Sankalp']) {
+    for (const type of ['habit', 'sankalpa', 'smart']) {
+      assert.ok(catalogue.has(suggestIcon(title, type)), `${title} (${type}) picked an icon missing from the catalogue`);
+    }
+  }
 });
 
 // Local-time "now" for a given day, so tests do not depend on timezone.
 const at = (dateStr) => new Date(`${dateStr}T12:00:00`);
 
 function newGoal(start = '2026-01-01', extra = {}) {
-  return { id: 'g1', ...newGoalData({ type: 'habit', title: 'Read', why: WHY, now: at(start) }), ...extra };
+  return { id: 'g1', ...newGoalData({ type: 'habit', title: 'Read', why: WHY, description: DESC, now: at(start) }), ...extra };
 }
 
 // Applies a sequence of answers, each on the open day, returns final goal + outcomes.
@@ -46,19 +69,36 @@ test('why is mandatory for every journey type', () => {
   assert.throws(() => newGoalData({ type: 'sankalpa', title: 'Walk', days: 5, why: '' }), /why/i);
 });
 
-test('description is optional and trimmed; details boxes are gone', () => {
+test('description is required and trimmed; details boxes are gone', () => {
   const g = newGoalData({ type: 'habit', title: 'Read', why: WHY, description: '  10 pages a night  ' });
   assert.equal(g.description, '10 Pages a Night');
-  assert.equal(newGoalData({ type: 'habit', title: 'Read', why: WHY }).description, '');
+  assert.throws(() => newGoalData({ type: 'habit', title: 'Read', why: WHY }), /description/i);
+  assert.throws(() => newGoalData({ type: 'habit', title: 'Read', why: WHY, description: '   ' }), /description/i);
   assert.equal('details' in g, false);
+});
+
+test('the icon catalogue has no repeated names within a group, and every icon name is a plain Lucide name', () => {
+  for (const group of ICON_GROUPS) {
+    const names = group.icons.map(([name]) => name);
+    assert.equal(new Set(names).size, names.length, `${group.name} repeats an icon`);
+    for (const name of names) assert.match(name, /^[a-z0-9]+(-[a-z0-9]+)*$/, name);
+  }
+  assert.ok(ICON_NAMES.length >= 200, 'catalogue should cover every area of personal development');
+});
+
+test('there are thirty distinct colours, and the default is one of them', () => {
+  assert.equal(COLOURS.length, 30);
+  assert.equal(new Set(COLOURS.map((c) => c.hex.toUpperCase())).size, 30);
+  assert.equal(new Set(COLOURS.map((c) => c.name)).size, 30);
+  assert.ok(COLOURS.some((c) => c.hex === '#14B8A6'));
 });
 
 test('habit defaults to 66 days and a sankalpa uses the chosen length', () => {
   assert.equal(newGoal().targetDays, 66);
-  const s = newGoalData({ type: 'sankalpa', title: 'Walk', days: 30, why: WHY });
+  const s = newGoalData({ type: 'sankalpa', title: 'Walk', days: 30, why: WHY, description: DESC });
   assert.equal(s.targetDays, 30);
-  assert.throws(() => newGoalData({ type: 'sankalpa', title: 'x', days: 0, why: WHY }));
-  assert.throws(() => newGoalData({ type: 'habit', title: '   ', why: WHY }));
+  assert.throws(() => newGoalData({ type: 'sankalpa', title: 'x', days: 0, why: WHY, description: DESC }));
+  assert.throws(() => newGoalData({ type: 'habit', title: '   ', why: WHY, description: DESC }));
 });
 
 test('only the earliest unresolved day is open; future days are locked', () => {
@@ -172,8 +212,8 @@ test('date arithmetic is timezone-safe', () => {
 test('a chosen start date becomes the first day; blank means today', async () => {
   const { normalizeStartDate } = await import('../js/logic.js');
   const now = new Date(2026, 0, 10, 9, 0, 0);
-  assert.equal(newGoalData({ type: 'habit', title: 'Read', why: WHY, startDate: '2025-12-01', now }).attemptStart, '2025-12-01');
-  assert.equal(newGoalData({ type: 'habit', title: 'Read', why: WHY, startDate: '', now }).attemptStart, '2026-01-10');
+  assert.equal(newGoalData({ type: 'habit', title: 'Read', why: WHY, description: DESC, startDate: '2025-12-01', now }).attemptStart, '2025-12-01');
+  assert.equal(newGoalData({ type: 'habit', title: 'Read', why: WHY, description: DESC, startDate: '', now }).attemptStart, '2026-01-10');
   assert.equal(normalizeStartDate('2026-02-28', now), '2026-02-28');
   assert.throws(() => normalizeStartDate('2026-02-30', now));
   assert.throws(() => normalizeStartDate('10/01/2026', now));
@@ -182,7 +222,7 @@ test('a chosen start date becomes the first day; blank means today', async () =>
 // ---------- sankalpa: no exceptions ----------
 
 test('a sankalpa has no exceptions: the first miss restarts it', () => {
-  const g = { id: 's1', ...newGoalData({ type: 'sankalpa', title: 'Walk', why: WHY, days: 10, startDate: '2026-01-01', now: at('2026-01-01') }) };
+  const g = { id: 's1', ...newGoalData({ type: 'sankalpa', title: 'Walk', why: WHY, description: DESC, days: 10, startDate: '2026-01-01', now: at('2026-01-01') }) };
   const res = applyCheckin(g, '2026-01-01', 'no', at('2026-01-01'));
   assert.equal(res.outcome, 'failed');
   assert.match(res.reason, /no exceptions/);
@@ -201,7 +241,7 @@ const smartInput = {
   timeBound: 'Start now, finish 5 km non-stop by the deadline',
   plan: planInput,
 };
-const smartBase = { type: 'smart', title: 'Run 5 km', why: WHY, smart: smartInput };
+const smartBase = { type: 'smart', title: 'Run 5 km', why: WHY, description: DESC, smart: smartInput };
 const smartGoal = (id, opts) => ({ id, ...newGoalData({ ...smartBase, ...opts }) });
 
 test('a SMART goal runs from its start to its deadline, both days included', () => {
@@ -407,7 +447,7 @@ test('redo starts a new journey with the same settings and links back to the ori
 });
 
 test('redo of a sankalpa or SMART goal takes the chosen length or deadline and resets the numbers', () => {
-  const s = { id: 'x', ...newGoalData({ type: 'sankalpa', title: 'Walk', why: WHY, days: 12, startDate: '2026-01-01', now: at('2026-01-01') }), status: 'completed' };
+  const s = { id: 'x', ...newGoalData({ type: 'sankalpa', title: 'Walk', why: WHY, description: DESC, days: 12, startDate: '2026-01-01', now: at('2026-01-01') }), status: 'completed' };
   assert.equal(redoData(s, { startDate: '2026-02-01', days: 20, now: at('2026-02-01') }).targetDays, 20);
 
   const m = { id: 'y', ...newGoalData({ ...smartBase, startDate: '2026-01-01', endDate: '2026-01-10', now: at('2026-01-01') }), status: 'completed' };
@@ -422,7 +462,7 @@ test('redo of a sankalpa or SMART goal takes the chosen length or deadline and r
 });
 
 test('only accomplished journeys can be redone', () => {
-  const g = { id: 'a', ...newGoalData({ type: 'habit', title: 'Read', why: WHY, startDate: '2026-01-01', now: at('2026-01-01') }) };
+  const g = { id: 'a', ...newGoalData({ type: 'habit', title: 'Read', why: WHY, description: DESC, startDate: '2026-01-01', now: at('2026-01-01') }) };
   assert.throws(() => redoData(g, { startDate: '2026-02-01' }), /accomplished/);
 });
 
@@ -458,7 +498,7 @@ test('SMART periods: every two weeks and every month are supported', () => {
 
 test('check-in summary counts journeys, open ones, fields still to fill, and filled today', () => {
   const today = '2026-01-05';
-  const habit = { id: 'h', ...newGoalData({ type: 'habit', title: 'Read', why: WHY, startDate: '2026-01-01', now: at('2026-01-01') }) };
+  const habit = { id: 'h', ...newGoalData({ type: 'habit', title: 'Read', why: WHY, description: DESC, startDate: '2026-01-01', now: at('2026-01-01') }) };
   const habitDone = { ...habit, id: 'hd', checkins: { '2026-01-01': 'done', '2026-01-02': 'done', '2026-01-03': 'done', '2026-01-04': 'done', '2026-01-05': 'done' } };
   const smart = smartGoal('s', { startDate: '2026-01-01', endDate: '2026-01-30', now: at('2026-01-01') });
   const done = [{ ...habitDone, status: 'active' }];
@@ -471,7 +511,7 @@ test('check-in summary counts journeys, open ones, fields still to fill, and fil
 });
 
 test('a missed journey can be redone from its record, with the same settings', () => {
-  const g = { id: 'm1', ...newGoalData({ type: 'habit', title: 'Read', why: WHY, startDate: '2026-01-01', now: at('2026-01-01') }), status: 'abandoned' };
+  const g = { id: 'm1', ...newGoalData({ type: 'habit', title: 'Read', why: WHY, description: DESC, startDate: '2026-01-01', now: at('2026-01-01') }), status: 'abandoned' };
   assert.throws(() => redoData(g, { startDate: '2026-02-01' }), /accomplished/);
   const again = redoData(g, { startDate: '2026-02-01', fromMiss: true, now: at('2026-02-01') });
   assert.equal(again.title, 'Read');
@@ -479,7 +519,7 @@ test('a missed journey can be redone from its record, with the same settings', (
 });
 
 test('a sankalpa length can change, but not below the days already done', () => {
-  const g = { id: 'sk', ...newGoalData({ type: 'sankalpa', title: 'Walk', why: WHY, days: 10, startDate: '2026-01-01', now: at('2026-01-01') }), checkins: { '2026-01-01': 'done', '2026-01-02': 'done' } };
+  const g = { id: 'sk', ...newGoalData({ type: 'sankalpa', title: 'Walk', why: WHY, description: DESC, days: 10, startDate: '2026-01-01', now: at('2026-01-01') }), checkins: { '2026-01-01': 'done', '2026-01-02': 'done' } };
   assert.equal(cleanSankalpaDays(g, '20'), 20);
   assert.throws(() => cleanSankalpaDays(g, '1'), /already done/);
   assert.throws(() => cleanSankalpaDays(g, '0'), /between/);
