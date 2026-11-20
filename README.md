@@ -2,7 +2,7 @@
 
 **A personal commitment tracker. Pick a habit, a sankalpa, or a SMART goal, and show up for it one day at a time.**
 
-Most habit apps ask one question: did you do it, yes or no. SANKALP asks the right question for each kind of commitment, keeps an honest record of every attempt, and never deletes a thing.
+Most habit apps ask one question: did you do it, yes or no. SANKALP asks the right question for each kind of commitment, keeps an honest record of every attempt. Nothing is deleted unless you choose to delete it.
 
 ## Why it matters
 
@@ -23,6 +23,7 @@ Most habit apps ask one question: did you do it, yes or no. SANKALP asks the rig
 | **SMART goal** | Describe the goal, list actions with measurable amounts per day or per week, and pick a deadline or a number of days. Each day you log your numbers. The app shows what is done, what remains, and what you need from here on, plus zero days. |
 | **Check in from home** | Everything due today is on the home screen, including SMART number boxes. |
 | **Your order** | Reorder your journeys with one button. The order is saved and the same on every device. |
+| **Drop-down columns** | On Check In and Your Journeys, each type (Habits, Sankalpas, SMART goals) opens as a drop-down. Opening one closes the other. |
 | **Accomplishments** | Accomplished and not accomplished journeys, sorted into Habits, Sankalpas and SMART goals. Columns on a wide screen, a single stack on a phone. |
 | **Redo** | Start an accomplished journey again with a new date, keeping its record intact. |
 | **Installable app** | Works as a full-screen app on phones and desktops, and the app shell opens offline. |
@@ -38,6 +39,7 @@ Most habit apps ask one question: did you do it, yes or no. SANKALP asks the rig
 | SMART goal | No exceptions. Targets are summed over the whole goal. A goal is accomplished when every target is met by the deadline. |
 | Completion | The journey moves to Accomplishments. |
 | Abandon | Closes a journey and records it under Not accomplished. Nothing is deleted. |
+| Delete | Permanently removes a journey and its history, after a confirmation. Edit journey has the button. |
 
 Rule constants live at the top of `js/logic.js`.
 

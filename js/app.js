@@ -26,6 +26,7 @@ const state = {
   drafts: {},        // unsaved SMART numbers, keyed "goalId|planIndex|date", kept across re-renders
   loginError: '',
   pickDay: {},       // which finished day a SMART goal's log is showing, by goal id
+  openType: null,    // which type column (habit, sankalpa, smart) is open on Check In or Your Journeys
 };
 let unsubscribeGoals = null;
 
@@ -637,7 +638,7 @@ function viewHome() {
     body = `
       ${!due.length ? `<div class="all-clear">${icon('circle-check')}<span>All caught up. Nothing needs a check-in right now.</span></div>` : ''}
       <section class="block">
-        ${typeColumns(due, (g) => checkRowHTML(g, today), 'Nothing to check in.')}
+        ${typeColumns(due, (g) => checkRowHTML(g, today), 'Nothing to check in.', { collapsible: true })}
       </section>`;
   }
 
@@ -664,7 +665,7 @@ function viewJourneys() {
   const today = L.todayStr();
   const active = sortedActive();
   const list = active.length
-    ? typeColumns(active, (g) => goalCard(g, today), (t) => `No ${TYPE_PLURAL[t].toLowerCase()} yet.`)
+    ? typeColumns(active, (g) => goalCard(g, today), (t) => `No ${TYPE_PLURAL[t].toLowerCase()} yet.`, { collapsible: true })
     : `<div class="empty small">
         <div class="empty-orb">${icon('sprout')}</div>
         <h3>No journeys yet</h3>
@@ -963,17 +964,31 @@ function viewGoal(id) {
 
 // Three columns on a wide screen, one stack on a phone. Each column is one type, with what that type means underneath.
 // emptyFor is the text for an empty column: a string, or a function of the type.
-function typeColumns(items, renderCard, emptyFor, { listClass = '', listAttrs = '' } = {}) {
+// Collapsible: each column's header is a drop-down. Only one is open at a time, so opening
+// another closes the one before it. Closed by default; state.openType holds the open one.
+function typeColumns(items, renderCard, emptyFor, { listClass = '', listAttrs = '', collapsible = false } = {}) {
   return `<div class="type-cols">${L.TYPES.map((type) => {
     const list = items.filter((x) => x.type === type);
     const empty = typeof emptyFor === 'function' ? emptyFor(type) : emptyFor;
-    return `
-      <section class="type-col" data-type="${type}">
-        <header class="type-col-head">${icon(TYPE_ICON[type])}<span>${TYPE_PLURAL[type]}</span><b>${list.length}</b></header>
+    const open = !collapsible || state.openType === type;
+    const bodyHTML = list.length
+      ? `<div class="type-col-list ${listClass}" ${listAttrs}>${list.map(renderCard).join('')}</div>`
+      : `<p class="muted type-col-empty">${esc(empty)}</p>`;
+    const panel = `
+      <div class="type-col-panel" id="type-panel-${type}"${open ? '' : ' hidden'}>
         <p class="type-col-sub">${esc(TYPE_SUB[type])}</p>
-        ${list.length
-          ? `<div class="type-col-list ${listClass}" ${listAttrs}>${list.map(renderCard).join('')}</div>`
-          : `<p class="muted type-col-empty">${esc(empty)}</p>`}
+        ${bodyHTML}
+      </div>`;
+    const head = collapsible
+      ? `<button type="button" class="type-col-head type-col-toggle" data-action="type-toggle" data-type="${type}"
+          aria-expanded="${open}" aria-controls="type-panel-${type}">
+          ${icon(TYPE_ICON[type])}<span>${TYPE_PLURAL[type]}</span><b>${list.length}</b>${icon('chevron-down', 'type-col-caret')}
+        </button>`
+      : `<header class="type-col-head">${icon(TYPE_ICON[type])}<span>${TYPE_PLURAL[type]}</span><b>${list.length}</b></header>`;
+    return `
+      <section class="type-col${collapsible ? ' is-collapsible' : ''}${open ? ' is-open' : ''}" data-type="${type}">
+        ${head}
+        ${collapsible ? panel : `<p class="type-col-sub">${esc(TYPE_SUB[type])}</p>${bodyHTML}`}
       </section>`;
   }).join('')}</div>`;
 }
@@ -1326,6 +1341,10 @@ function openGoalSettings(g) {
         <div><strong>Abandon this journey</strong><small class="muted">It moves to Not accomplished. Nothing is deleted.</small></div>
         <button type="button" class="btn danger sm" data-abandon>Abandon</button>
       </div>
+      <div class="danger-zone">
+        <div><strong>Delete this journey</strong><small class="muted">Removes it and its whole history for good.</small></div>
+        <button type="button" class="btn danger sm" data-delete>Delete</button>
+      </div>
     </form>`;
   openModal({
     title: 'Edit journey',
@@ -1389,6 +1408,23 @@ function openGoalSettings(g) {
           close();
           location.hash = '#/journeys';
           toast('Journey closed and recorded', 'info');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+      w.querySelector('[data-delete]').addEventListener('click', async () => {
+        const ok = await confirmDialog({
+          title: 'Delete this journey?',
+          message: `"${esc(g.title)}" and its whole history will be permanently deleted. This cannot be undone.`,
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await db.deleteGoal(state.user.uid, g.id);
+          close();
+          location.hash = '#/journeys';
+          toast('Journey deleted', 'info');
         } catch (err) {
           toast(err.message, 'error');
         }
@@ -1519,6 +1555,7 @@ function onViewClick(e) {
         render();
         break;
       case 'reorder': state.reorder = !state.reorder; render(); break;
+      case 'type-toggle': state.openType = state.openType === act.dataset.type ? null : act.dataset.type; render(); break;
       default: break;
     }
     return;
@@ -1599,6 +1636,8 @@ function render() {
   const changed = routeKey !== state.lastRouteKey;
   state.lastRouteKey = routeKey;
   if (r.name !== 'home' && r.name !== 'journeys') state.reorder = false;
+  // Each screen opens with every column closed.
+  if (changed) state.openType = null;
 
   let html;
   if (r.name === 'goal') html = viewGoal(r.id);

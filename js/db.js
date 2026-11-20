@@ -137,6 +137,11 @@ export async function abandon(uid, goalId) {
   });
 }
 
+// Permanently removes one journey and its history. Only the owner can delete (see firestore.rules).
+export async function deleteGoal(uid, goalId) {
+  await deleteDoc(doc(goalsCol(uid), goalId));
+}
+
 // Full export of the user's data, for backup before any app update.
 export async function exportAll(uid) {
   const snap = await getDocs(goalsCol(uid));
