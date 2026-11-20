@@ -5,6 +5,7 @@ import {
   newGoalData, applyCheckin, applyAbandon, journey, totalCells, addDays, diffDays, notAccomplished, accomplished,
   suggestIcon, redoData, redoDefaults, exceptionAvailability, cleanPlan, resolveSmartEnd, smartProgress, titleCase,
   applySmartLog, smartPhase, sortByOrder, nextOrder, requireWhy, nextActionText, checkinSummary, cleanSankalpaDays,
+  cleanSmart,
 } from '../js/logic.js';
 
 const WHY = 'It makes me feel steady';
@@ -62,18 +63,18 @@ function run(goal, answers) {
   return { goal: g, outcomes };
 }
 
-test('why is mandatory for every journey type', () => {
-  assert.throws(() => newGoalData({ type: 'habit', title: 'Read' }), /why/i);
-  assert.throws(() => newGoalData({ type: 'habit', title: 'Read', why: '   ' }), /why/i);
+test('why is optional when creating, and still required when editing', () => {
+  assert.equal(newGoalData({ type: 'habit', title: 'Read' }).why, '');
+  assert.equal(newGoalData({ type: 'habit', title: 'Read', why: '   ' }).why, '');
   assert.equal(requireWhy('  because  '), 'Because');
-  assert.throws(() => newGoalData({ type: 'sankalpa', title: 'Walk', days: 5, why: '' }), /why/i);
+  assert.throws(() => requireWhy('   '), /why/i);
 });
 
-test('description is required and trimmed; details boxes are gone', () => {
+test('description is optional and trimmed when creating; details boxes are gone', () => {
   const g = newGoalData({ type: 'habit', title: 'Read', why: WHY, description: '  10 pages a night  ' });
   assert.equal(g.description, '10 Pages a Night');
-  assert.throws(() => newGoalData({ type: 'habit', title: 'Read', why: WHY }), /description/i);
-  assert.throws(() => newGoalData({ type: 'habit', title: 'Read', why: WHY, description: '   ' }), /description/i);
+  assert.equal(newGoalData({ type: 'habit', title: 'Read', why: WHY }).description, '');
+  assert.equal(newGoalData({ type: 'habit', title: 'Read', why: WHY, description: '   ' }).description, '');
   assert.equal('details' in g, false);
 });
 
@@ -98,7 +99,7 @@ test('habit defaults to 66 days and a sankalpa uses the chosen length', () => {
   const s = newGoalData({ type: 'sankalpa', title: 'Walk', days: 30, why: WHY, description: DESC });
   assert.equal(s.targetDays, 30);
   assert.throws(() => newGoalData({ type: 'sankalpa', title: 'x', days: 0, why: WHY, description: DESC }));
-  assert.throws(() => newGoalData({ type: 'habit', title: '   ', why: WHY, description: DESC }));
+  assert.equal(newGoalData({ type: 'habit', title: '   ', why: WHY, description: DESC }).title, 'Habit');
 });
 
 test('only the earliest unresolved day is open; future days are locked', () => {
@@ -264,10 +265,11 @@ test('a SMART goal can end on a number of days instead of a deadline', () => {
   assert.equal(s.smart.endDate, '2026-01-14');
 });
 
-test('a SMART goal needs its text parts, a plan, and a valid deadline', () => {
+test('a SMART goal text parts and plan are optional, but it still needs a valid deadline', () => {
   const base = { ...smartBase, startDate: '2026-01-01', endDate: '2026-01-30', now: at('2026-01-01') };
-  assert.throws(() => newGoalData({ ...base, smart: { ...smartInput, realistic: '  ' } }), /Realistic/);
-  assert.throws(() => newGoalData({ ...base, smart: { ...smartInput, plan: [] } }), /at least one/);
+  assert.equal(newGoalData({ ...base, smart: { ...smartInput, realistic: '  ' } }).smart.realistic, '');
+  assert.deepEqual(newGoalData({ ...base, smart: { ...smartInput, plan: [] } }).smart.plan, []);
+  assert.throws(() => cleanSmart({ ...smartInput, realistic: '  ' }), /Realistic/);
   assert.throws(() => newGoalData({ ...base, endDate: '2025-12-31' }), /on or after/);
   assert.throws(() => newGoalData({ ...base, endDate: '', days: '' }), /days/);
 });

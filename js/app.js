@@ -36,7 +36,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
 const icon = (name, cls = '') => `<i data-lucide="${esc(name)}" class="${cls}" aria-hidden="true"></i>`;
-// Every form field is required unless it says otherwise, so each label carries this star.
+// Fields that must be filled carry this star. Create-journey fields are optional and have none.
 const REQ = '<b class="req" title="Required" aria-label="required">*</b>';
 const refreshIcons = () => window.lucide?.createIcons();
 
@@ -1045,25 +1045,25 @@ function smartPlanHTML(g) {
 // ---------- dialogs ----------
 
 // The three SMART text parts: Specific, Realistic, Time-bound.
-function smartFieldsHTML(values = {}) {
+function smartFieldsHTML(values = {}, req = true) {
   return L.SMART_FIELDS.map((f) => `
     <label class="field">
-      <span>${esc(f.label)} ${REQ}</span>
+      <span>${esc(f.label)}${req ? ` ${REQ}` : ''}</span>
       <small class="muted field-hint">${esc(f.hint)}</small>
-      <textarea name="${f.key}" rows="2" maxlength="500" required>${esc(values[f.key] || '')}</textarea>
+      <textarea name="${f.key}" rows="2" maxlength="500"${req ? ' required' : ''}>${esc(values[f.key] || '')}</textarea>
     </label>`).join('');
 }
 
-function descriptionFieldHTML(value = '') {
+function descriptionFieldHTML(value = '', req = true) {
   return `
-    <label class="field"><span>Description ${REQ}</span>
-      <textarea name="description" rows="2" maxlength="1000" required placeholder="What this is, in a sentence or two">${esc(value)}</textarea></label>`;
+    <label class="field"><span>Description${req ? ` ${REQ}` : ''}</span>
+      <textarea name="description" rows="2" maxlength="1000"${req ? ' required' : ''} placeholder="What this is, in a sentence or two">${esc(value)}</textarea></label>`;
 }
 
-function whyFieldHTML(value = '') {
+function whyFieldHTML(value = '', req = true) {
   return `
-    <label class="field"><span>Why ${REQ}</span>
-      <textarea name="why" rows="2" maxlength="500" required placeholder="The reason this matters to you">${esc(value)}</textarea></label>`;
+    <label class="field"><span>Why${req ? ` ${REQ}` : ''}</span>
+      <textarea name="why" rows="2" maxlength="500"${req ? ' required' : ''} placeholder="The reason this matters to you">${esc(value)}</textarea></label>`;
 }
 
 // One row of the SMART plan: what to do on the left, how much and per day or week on the right.
@@ -1082,10 +1082,10 @@ function planRowHTML(row = {}) {
     </div>`;
 }
 
-function planHTML(rows = []) {
+function planHTML(rows = [], req = true) {
   return `
     <div class="field plan-field">
-      <span>Plan: actionable and measurable ${REQ}</span>
+      <span>Plan: actionable and measurable${req ? ` ${REQ}` : ''}</span>
       <p class="muted field-hint">Left: what you will do. Right: how much, per day or per week. Add one row for each action.</p>
       <div class="plan" data-plan>
         <div class="plan-head" aria-hidden="true"><span>Actionable</span><span>Measurable</span></div>
@@ -1160,12 +1160,12 @@ function openCreate() {
           ${icon('target')}<strong>SMART goal</strong></label>
       </div>
       <label class="field"><span data-title-label>Habit</span>
-        <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" required autocomplete="off"></label>
-      ${descriptionFieldHTML()}
-      ${whyFieldHTML()}
+        <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" autocomplete="off"></label>
+      ${descriptionFieldHTML('', false)}
+      ${whyFieldHTML('', false)}
       <div class="field-row">
-        <label class="field"><span>Start date ${REQ}</span>
-          <input name="startDate" type="date" value="${today}" required></label>
+        <label class="field"><span>Start date</span>
+          <input name="startDate" type="date" value="${today}"></label>
         <label class="field" data-only="sankalpa smart" hidden><span>Days ${REQ}</span>
           <input name="days" type="number" min="1" max="365" inputmode="numeric" placeholder="e.g. 30"></label>
       </div>
@@ -1176,11 +1176,11 @@ function openCreate() {
       </div>
       <div data-only="smart" hidden>
         <p class="muted form-hint">${icon('target')} Describe the goal, then build the plan. You log your numbers every day.</p>
-        ${smartFieldsHTML()}
-        ${planHTML([])}
+        ${smartFieldsHTML({}, false)}
+        ${planHTML([], false)}
       </div>
-      <div class="field"><span>Icon ${REQ}</span>${iconDropdown('', { auto: true })}</div>
-      <div class="field"><span>Colour ${REQ}</span>${colorDropdown(DEFAULT_COLOUR)}</div>
+      <div class="field"><span>Icon</span>${iconDropdown('', { auto: true })}</div>
+      <div class="field"><span>Colour</span>${colorDropdown(DEFAULT_COLOUR)}</div>
       <p class="error" data-error hidden></p>
     </form>`;
   const footer = `<button class="btn ghost" data-close>Cancel</button><button class="btn primary" form="create-form" type="submit">Start journey</button>`;

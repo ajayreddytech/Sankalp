@@ -201,11 +201,12 @@ export function titleCase(text) {
   }).join('');
 }
 
-/** Checks the three text parts of a SMART goal. Every part is required. */
-export function cleanSmart(input = {}) {
+/** Checks the three text parts of a SMART goal. Every part is required unless optional is true. */
+export function cleanSmart(input = {}, { optional = false } = {}) {
   const out = {};
   for (const { key, label } of SMART_FIELDS) {
     const v = titleCase(String(input[key] ?? '').trim());
+    if (!v && optional) { out[key] = ''; continue; }
     if (!v) throw new Error(`Fill in the "${label}" part.`);
     if (v.length > 500) throw new Error(`"${label}" must be 500 characters or fewer.`);
     out[key] = v;
@@ -215,12 +216,13 @@ export function cleanSmart(input = {}) {
 
 /**
  * The SMART plan: rows of { action, amount, unit, per }.
- * "per" is 'day' or 'week'. Blank rows are ignored. At least one row is required.
+ * "per" is 'day' or 'week'. Blank rows are ignored. At least one row is required unless optional is true.
  */
-export function cleanPlan(rows = []) {
+export function cleanPlan(rows = [], { optional = false } = {}) {
   const list = (Array.isArray(rows) ? rows : []).filter(
     (r) => r && (String(r.action ?? '').trim() || String(r.amount ?? '').trim()),
   );
+  if (!list.length && optional) return [];
   if (!list.length) throw new Error('Add at least one actionable item with an amount.');
   if (list.length > MAX_PLAN_ROWS) throw new Error(`Use at most ${MAX_PLAN_ROWS} actionable items.`);
   const cleaned = list.map((r, i) => {
@@ -244,18 +246,23 @@ export function cleanPlan(rows = []) {
   return cleaned.map((p) => (Number.isFinite(p.key) ? p : { ...p, key: next++ }));
 }
 
-/** Every journey needs a reason. It is the first thing shown when the urge to quit arrives. */
+/** A reason is shown when the urge to quit arrives. Required when editing a journey. */
 export function requireWhy(value) {
   const why = titleCase(String(value ?? '').trim());
   if (!why) throw new Error('Write why this matters to you.');
   return why.slice(0, 500);
 }
 
-/** Every journey needs a description too. Everything is required by default. */
+/** A description, required when editing a journey. */
 export function cleanDescription(value) {
   const text = titleCase(String(value ?? '').trim()).slice(0, 1000);
   if (!text) throw new Error('Write a short description.');
   return text;
+}
+
+/** Why and description are optional when creating a journey: blank stays blank. */
+export function optionalText(value, max) {
+  return titleCase(String(value ?? '').trim()).slice(0, max);
 }
 
 /** Next position for a new journey, after every existing one. */
@@ -276,11 +283,11 @@ export function newGoalData({
   type, title, description, why, days, endDate, smart, icon, color, startDate, order = null,
   redoOf = null, now = new Date(),
 }) {
-  const clean = titleCase(String(title || '').trim());
-  if (!clean) throw new Error(type === 'smart' ? 'Write your SMART goal.' : 'Give your habit or sankalpa a title.');
-  if (clean.length > 80) throw new Error('Title must be 80 characters or fewer.');
   if (!TYPES.includes(type)) throw new Error('Unknown type.');
-  const reason = requireWhy(why);
+  // Everything is optional when creating. A blank title is named after the type.
+  const clean = titleCase(String(title || '').trim()) || TYPE_LABEL[type];
+  if (clean.length > 80) throw new Error('Title must be 80 characters or fewer.');
+  const reason = optionalText(why, 500);
 
   const start = normalizeStartDate(startDate, now);
   let targetDays = HABIT_DAYS;
@@ -296,8 +303,8 @@ export function newGoalData({
     const end = resolveSmartEnd(start, { endDate, days });
     targetDays = smartLength(start, end);
     smartData = {
-      ...cleanSmart(smart),
-      plan: cleanPlan(smart?.plan),
+      ...cleanSmart(smart, { optional: true }),
+      plan: cleanPlan(smart?.plan, { optional: true }),
       endDate: end,
     };
   }
@@ -307,7 +314,7 @@ export function newGoalData({
     schemaVersion: 1,
     type,
     title: clean,
-    description: cleanDescription(description),
+    description: optionalText(description, 1000),
     why: reason,
     targetDays,
     smart: smartData,        // null unless type is 'smart'
