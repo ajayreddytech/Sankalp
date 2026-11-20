@@ -1297,29 +1297,30 @@ function openGoalSettings(g) {
   // Habits and sankalpas keep their grid by day, so the start date locks after the first check-in.
   // SMART goals keep their numbers by date, so their dates and plan stay editable.
   const startEditable = isSmart || (g.status === 'active' && !hasCheckins);
+  // Only what the journey cannot work without is required: a sankalpa's days, and a SMART goal's days or deadline.
   const lengthField = g.type === 'habit' ? '' : `
-    <label class="field"><span>Days ${REQ}</span>
+    <label class="field"><span>Days${g.type === 'sankalpa' ? ` ${REQ}` : ''}</span>
       <input name="days" type="number" min="1" max="365" inputmode="numeric" value="${g.targetDays}"></label>`;
 
   const body = `
     <form id="edit-form" class="form" novalidate>
-      <label class="field"><span>${esc(L.TYPE_LABEL[g.type] || 'Habit')} ${REQ}</span>
-        <input name="title" maxlength="80" required value="${esc(g.title)}"></label>
-      ${descriptionFieldHTML(g.description || '')}
-      ${whyFieldHTML(g.why || '')}
+      <label class="field"><span>${esc(L.TYPE_LABEL[g.type] || 'Habit')}</span>
+        <input name="title" maxlength="80" value="${esc(g.title)}"></label>
+      ${descriptionFieldHTML(g.description || '', false)}
+      ${whyFieldHTML(g.why || '', false)}
       <div class="field-row">
-        <label class="field"><span>Start date ${REQ}${startEditable ? '' : ' <small class="muted">(locked after the first check-in)</small>'}</span>
+        <label class="field"><span>Start date${startEditable ? '' : ' <small class="muted">(locked after the first check-in)</small>'}</span>
           <input name="startDate" type="date" value="${esc(g.attemptStart)}" ${startEditable ? '' : 'disabled'}></label>
         ${g.type === 'habit' ? '' : lengthField}
       </div>
       ${isSmart ? `
-        <label class="field"><span>Deadline ${REQ}</span>
+        <label class="field"><span>Deadline</span>
           <input name="endDate" type="date" value="${esc(g.smart.endDate)}"></label>
-        <p class="muted form-hint">If you change the days, the deadline follows them. Otherwise the deadline is used.</p>
-        ${smartFieldsHTML(g.smart)}
-        ${planHTML(g.smart.plan || [])}` : ''}
-      <div class="field"><span>Icon ${REQ}</span>${iconDropdown(g.icon)}</div>
-      <div class="field"><span>Colour ${REQ}</span>${colorDropdown(g.color)}</div>
+        <p class="muted form-hint">Give a deadline, or the days. If you change the days, the deadline follows them.</p>
+        ${smartFieldsHTML(g.smart, false)}
+        ${planHTML(g.smart.plan || [], false)}` : ''}
+      <div class="field"><span>Icon</span>${iconDropdown(g.icon)}</div>
+      <div class="field"><span>Colour</span>${colorDropdown(g.color)}</div>
       <p class="error" data-error hidden></p>
       <div class="danger-zone">
         <div><strong>Abandon this journey</strong><small class="muted">It moves to Not accomplished. Nothing is deleted.</small></div>
@@ -1340,26 +1341,31 @@ function openGoalSettings(g) {
         errBox.hidden = true;
         const fd = new FormData(form);
         try {
-          const title = L.titleCase(String(fd.get('title') || '').trim()).slice(0, 80);
-          if (!title) throw new Error('Title cannot be empty.');
+          // A blank title keeps the current name; blank text parts, plan, icon and colour are allowed.
+          const title = L.titleCase(String(fd.get('title') || '').trim()).slice(0, 80) || g.title;
           const fields = {
             title,
-            description: L.cleanDescription(fd.get('description')),
-            why: L.requireWhy(fd.get('why')),
+            description: L.optionalText(fd.get('description'), 1000),
+            why: L.optionalText(fd.get('why'), 500),
             icon: fd.get('icon') || g.icon,
             color: fd.get('color') || g.color,
           };
-          if (startEditable) fields.attemptStart = L.normalizeStartDate(fd.get('startDate'));
+          // A blank start date keeps the current one (it is never reset to today).
+          if (startEditable && String(fd.get('startDate') || '').trim()) {
+            fields.attemptStart = L.normalizeStartDate(fd.get('startDate'));
+          }
           if (g.type === 'sankalpa') fields.targetDays = L.cleanSankalpaDays(g, fd.get('days'));
           if (isSmart) {
             const start = fields.attemptStart || g.attemptStart;
-            const days = Math.floor(Number(fd.get('days')));
-            // Changing the days moves the deadline; otherwise the chosen deadline stands.
-            const end = days !== g.targetDays
-              ? L.resolveSmartEnd(start, { days })
+            const daysText = String(fd.get('days') ?? '').trim();
+            const dayCountChanged = daysText !== '' && Math.floor(Number(daysText)) !== g.targetDays;
+            // Changing the days moves the deadline. Otherwise a given deadline stands, and with no deadline the days are used.
+            // Blank days and blank deadline is the one case that fails: resolveSmartEnd says what is missing.
+            const end = dayCountChanged || !String(fd.get('endDate') || '').trim()
+              ? L.resolveSmartEnd(start, { days: daysText })
               : L.normalizeEndDate(fd.get('endDate'), start);
-            const parts = L.cleanSmart(Object.fromEntries(L.SMART_FIELDS.map((f) => [f.key, fd.get(f.key)])));
-            fields.smart = { ...parts, plan: L.cleanPlan(planFromForm(fd)), endDate: end };
+            const parts = L.cleanSmart(Object.fromEntries(L.SMART_FIELDS.map((f) => [f.key, fd.get(f.key)])), { optional: true });
+            fields.smart = { ...parts, plan: L.cleanPlan(planFromForm(fd), { optional: true }), endDate: end };
             fields.targetDays = L.smartLength(start, end);
           }
           await db.updateGoalDetails(state.user.uid, g.id, fields);

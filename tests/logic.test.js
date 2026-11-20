@@ -4,7 +4,7 @@ import { ICON_NAMES, COLOURS, ICON_GROUPS } from '../js/choices.js';
 import {
   newGoalData, applyCheckin, applyAbandon, journey, totalCells, addDays, diffDays, notAccomplished, accomplished,
   suggestIcon, redoData, redoDefaults, exceptionAvailability, cleanPlan, resolveSmartEnd, smartProgress, titleCase,
-  applySmartLog, smartPhase, sortByOrder, nextOrder, requireWhy, nextActionText, checkinSummary, cleanSankalpaDays,
+  applySmartLog, smartPhase, sortByOrder, nextOrder, optionalText, nextActionText, checkinSummary, cleanSankalpaDays,
   cleanSmart,
 } from '../js/logic.js';
 
@@ -63,11 +63,11 @@ function run(goal, answers) {
   return { goal: g, outcomes };
 }
 
-test('why is optional when creating, and still required when editing', () => {
+test('why is optional when creating and when editing: blank stays blank', () => {
   assert.equal(newGoalData({ type: 'habit', title: 'Read' }).why, '');
   assert.equal(newGoalData({ type: 'habit', title: 'Read', why: '   ' }).why, '');
-  assert.equal(requireWhy('  because  '), 'Because');
-  assert.throws(() => requireWhy('   '), /why/i);
+  assert.equal(optionalText('  because  ', 500), 'Because');
+  assert.equal(optionalText('   ', 500), '');
 });
 
 test('description is optional and trimmed when creating; details boxes are gone', () => {

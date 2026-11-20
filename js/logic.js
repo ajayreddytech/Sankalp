@@ -246,21 +246,7 @@ export function cleanPlan(rows = [], { optional = false } = {}) {
   return cleaned.map((p) => (Number.isFinite(p.key) ? p : { ...p, key: next++ }));
 }
 
-/** A reason is shown when the urge to quit arrives. Required when editing a journey. */
-export function requireWhy(value) {
-  const why = titleCase(String(value ?? '').trim());
-  if (!why) throw new Error('Write why this matters to you.');
-  return why.slice(0, 500);
-}
-
-/** A description, required when editing a journey. */
-export function cleanDescription(value) {
-  const text = titleCase(String(value ?? '').trim()).slice(0, 1000);
-  if (!text) throw new Error('Write a short description.');
-  return text;
-}
-
-/** Why and description are optional when creating a journey: blank stays blank. */
+/** Why and description are optional, both when creating and editing a journey: blank stays blank. */
 export function optionalText(value, max) {
   return titleCase(String(value ?? '').trim()).slice(0, max);
 }
