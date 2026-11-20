@@ -13,6 +13,7 @@ export const SANKALPA_MAX_DAYS = 365;
 export const SMART_MAX_DAYS = 365;
 export const MAX_PLAN_ROWS = 10;
 export const WEEK_DAYS = 7;
+export const HABIT_STREAK = 3;          // sankalpa: accomplished this many times in a row, no gap day, becomes a habit
 
 // How often a SMART plan item is measured, in days. "per day" is 1, "per month" is 30.
 export const PERIOD_DAYS = { day: 1, week: 7, biweekly: 14, month: 30 };
@@ -780,4 +781,75 @@ export function accomplished(goals) {
   return goals
     .filter((g) => g.status === 'completed')
     .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
+}
+
+// ---------- grouping for the Accomplishments tab ----------
+
+const titleKey = (title) => String(title || '').trim().toLowerCase();
+
+/** The day a sankalpa was accomplished: its last check-in. */
+function accomplishedDay(goal) {
+  const done = Object.keys(goal.checkins || {}).filter((k) => goal.checkins[k] === 'done').sort();
+  return done[done.length - 1] || String(goal.completedAt || '').slice(0, 10);
+}
+
+// Joins rows with the same key into one group. Each group has its count and its newest row (latest).
+function groupRows(rows, keyOf) {
+  const map = new Map();
+  for (const r of rows) {
+    const k = keyOf(r);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(r);
+  }
+  return [...map.values()]
+    .map((items) => {
+      items.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
+      const latest = items[0];
+      return { type: latest.type, title: latest.title, count: items.length, latest, items };
+    })
+    .sort((a, b) => (b.latest.when || '').localeCompare(a.latest.when || ''));
+}
+
+/**
+ * Accomplished journeys, one group per journey (same type and title). A sankalpa accomplished
+ * HABIT_STREAK or more times in a row, each redo starting the day after the last one ended, is listed as a habit.
+ */
+export function accomplishedGroups(goals) {
+  const rows = accomplished(goals).map((g) => ({
+    goalId: g.id,
+    title: g.title,
+    type: g.type,
+    start: g.attemptStart || '',
+    end: g.type === 'sankalpa' ? accomplishedDay(g) : String(g.completedAt || '').slice(0, 10),
+    when: g.completedAt || '',
+  }));
+
+  const sankalpasByTitle = new Map();
+  for (const r of rows.filter((x) => x.type === 'sankalpa')) {
+    const k = titleKey(r.title);
+    if (!sankalpasByTitle.has(k)) sankalpasByTitle.set(k, []);
+    sankalpasByTitle.get(k).push(r);
+  }
+  for (const list of sankalpasByTitle.values()) {
+    list.sort((a, b) => a.start.localeCompare(b.start));
+    let run = [];
+    const closeRun = () => {
+      if (run.length >= HABIT_STREAK) run.forEach((r) => { r.type = 'habit'; });
+      run = [];
+    };
+    for (const r of list) {
+      const prev = run[run.length - 1];
+      if (prev && r.start !== addDays(prev.end, 1)) closeRun();
+      run.push(r);
+    }
+    closeRun();
+  }
+
+  return groupRows(rows, (r) => `${r.type}|${titleKey(r.title)}`);
+}
+
+/** Not accomplished, one group per journey and outcome, so repeated misses show how many times. */
+export function notAccomplishedGroups(goals, today = todayStr()) {
+  const rows = notAccomplished(goals, today).map((m) => ({ ...m, when: m.endDate || '' }));
+  return groupRows(rows, (r) => `${r.type}|${titleKey(r.title)}|${r.outcome}`);
 }

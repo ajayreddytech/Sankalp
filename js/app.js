@@ -982,12 +982,15 @@ function typeColumns(items, renderCard, emptyFor, { listClass = '', listAttrs = 
 // Tapping the title opens the journey for the details.
 function viewAccomplishments() {
   const tab = state.accTab;
-  const done = L.accomplished(state.goals);
-  const misses = L.notAccomplished(state.goals, L.todayStr());
+  const done = L.accomplishedGroups(state.goals);
+  const misses = L.notAccomplishedGroups(state.goals, L.todayStr());
+  const doneTotal = done.reduce((n, g) => n + g.count, 0);
+  const missTotal = misses.reduce((n, g) => n + g.count, 0);
+  const countLabel = (text, n) => (n > 1 ? `${text} × ${n}` : text);
   const tabs = `
     <div class="segmented" role="tablist">
-      <button role="tab" aria-selected="${tab === 'accomplished'}" class="${tab === 'accomplished' ? 'on' : ''}" data-action="acc-tab" data-tab="accomplished">${icon('trophy')}Accomplished <b>${done.length}</b></button>
-      <button role="tab" aria-selected="${tab === 'missed'}" class="${tab === 'missed' ? 'on' : ''}" data-action="acc-tab" data-tab="missed">${icon('circle-x')}Not accomplished <b>${misses.length}</b></button>
+      <button role="tab" aria-selected="${tab === 'accomplished'}" class="${tab === 'accomplished' ? 'on' : ''}" data-action="acc-tab" data-tab="accomplished">${icon('trophy')}Accomplished <b>${doneTotal}</b></button>
+      <button role="tab" aria-selected="${tab === 'missed'}" class="${tab === 'missed' ? 'on' : ''}" data-action="acc-tab" data-tab="missed">${icon('circle-x')}Not accomplished <b>${missTotal}</b></button>
     </div>`;
 
   const record = (title, status, tone, goalId, redoAction) => `
@@ -1001,11 +1004,11 @@ function viewAccomplishments() {
 
   let list;
   if (tab === 'accomplished') {
-    list = typeColumns(done, (g) => record(g.title, 'Accomplished', 'ok', g.id, 'redo'), 'Nothing accomplished in this group yet.');
+    list = typeColumns(done, (g) => record(g.title, countLabel('Accomplished', g.count), 'ok', g.latest.goalId, 'redo'), 'Nothing accomplished in this group yet.');
   } else {
-    list = typeColumns(misses, (m) => (m.outcome === 'abandoned'
-      ? record(m.title, 'Abandoned', 'abandoned', m.goalId, 'redo-miss')
-      : record(m.title, 'Not accomplished', 'failed', m.goalId, 'redo-miss')), 'No misses in this group.');
+    list = typeColumns(misses, (m) => (m.latest.outcome === 'abandoned'
+      ? record(m.title, countLabel('Abandoned', m.count), 'abandoned', m.latest.goalId, 'redo-miss')
+      : record(m.title, countLabel('Not accomplished', m.count), 'failed', m.latest.goalId, 'redo-miss')), 'No misses in this group.');
   }
 
   const empty = !done.length && !misses.length;
