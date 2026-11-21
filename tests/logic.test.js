@@ -5,7 +5,7 @@ import {
   newGoalData, applyCheckin, applyAbandon, journey, totalCells, addDays, diffDays, notAccomplished, accomplished,
   suggestIcon, redoData, redoDefaults, exceptionAvailability, cleanPlan, resolveSmartEnd, smartProgress, titleCase,
   applySmartLog, smartPhase, sortByOrder, nextOrder, optionalText, nextActionText, checkinSummary, cleanSankalpaDays,
-  cleanSmart, checkinDay, dayNumber, periodLabel, perPeriodAmount, isNextMorning,
+  cleanSmart, checkinDay, dayNumber, periodLabel, perPeriodAmount, isNextMorning, startInfo,
 } from '../js/logic.js';
 
 const WHY = 'It makes me feel steady';
@@ -606,7 +606,9 @@ test('hours per day and Pomodoros per day plan items count per day', () => {
 
 test('a total over the whole goal divides into an amount per period', () => {
   assert.equal(perPeriodAmount(30, 10, 'day'), 3);          // 30 items over 10 days is 3 a day
-  assert.equal(perPeriodAmount(10, 30, 'day'), 0.33);       // rounded to two places
+  assert.equal(perPeriodAmount(10, 30, 'day', 'hr'), 0.33);  // a measured unit keeps two decimals
+  assert.equal(perPeriodAmount(10, 30, 'day'), 1);           // whole things round up, so the 10 is reached
+  assert.equal(perPeriodAmount(10, 30, 'day', 'pomodoros'), 1);
   assert.equal(perPeriodAmount(12, 14, 'week'), 6);         // 12 over two weeks is 6 a week
   assert.equal(perPeriodAmount(20, 5, 'hours-day'), 4);     // hours per day works the same
   assert.equal(perPeriodAmount('', 10, 'day'), null);
@@ -634,4 +636,16 @@ test('WhatsApp-style markers keep their first letter capitalised', () => {
   assert.equal(titleCase('_italic_ text'), '_Italic_ Text');
   assert.equal(titleCase('~strike~ word'), '~Strike~ Word');
   assert.equal(titleCase('*bold* word'), '*Bold* Word');
+});
+
+test('a journey page says Started once its day has come, and Starting before, with how far away', () => {
+  const today = '2026-11-20';
+  assert.deepEqual(startInfo('2026-11-20', today), { word: 'Started', text: null });
+  assert.deepEqual(startInfo('2026-11-01', today), { word: 'Started', text: null });
+  assert.deepEqual(startInfo('2026-11-21', today), { word: 'Starting', text: 'Tomorrow' });
+  assert.deepEqual(startInfo('2026-11-22', today), { word: 'Starting', text: 'Day After Tomorrow' });
+  assert.deepEqual(startInfo('2026-11-27', today), { word: 'Starting', text: 'In 7 Days' });
+  assert.deepEqual(startInfo('2026-12-02', today), { word: 'Starting', text: 'In 12 Days' });
+  assert.deepEqual(startInfo('2026-12-15', today), { word: 'Starting', text: 'Next Month' });
+  assert.deepEqual(startInfo('2027-02-10', today), { word: 'Starting', text: null });
 });

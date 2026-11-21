@@ -54,6 +54,12 @@ function fmtDate(s) {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// The start box on a journey page: "Started 3 Jan 2026", or "Starting tomorrow · 21 Nov 2026".
+function startKpiHTML(g, today) {
+  const s = L.startInfo(g.attemptStart, today);
+  return `<div class="kpi"><span>${s.word}</span><strong class="sm">${s.text ? `${esc(s.text)} · ` : ''}${fmtDate(g.attemptStart)}</strong></div>`;
+}
+
 // Whole numbers stay whole; decimals show one place (1.5, 0.3).
 const fmtNum = (n) => {
   const v = Number(n) || 0;
@@ -735,7 +741,6 @@ function viewHome() {
         ${active.length ? `
         <div class="checkin-bar">
           <div class="stats summary">
-            <div class="stat"><div><strong>${s.filled}</strong><span>Filled</span></div></div>
             <div class="stat${s.needed ? ' hot' : ''}"><div><strong>${s.needed}</strong><span>To fill</span></div></div>
           </div>
           ${editBtn}
@@ -892,7 +897,7 @@ function viewHabitGoal(g, today) {
             ? `<div class="kpi"><span>Exceptions left</span><strong>${policy.maxExceptions - j.exceptions}<small> / ${policy.maxExceptions}</small></strong></div>`
             : '<div class="kpi"><span>Exceptions</span><strong class="sm">None</strong></div>'}
           <div class="kpi"><span>Journey length</span><strong>${j.total}<small> days</small></strong></div>
-          <div class="kpi"><span>Started</span><strong class="sm">${fmtDate(g.attemptStart)}</strong></div>
+          ${startKpiHTML(g, today)}
         </div>
       </div>
 
@@ -986,7 +991,7 @@ function viewSmartGoal(g, today) {
       <div class="overview">
         ${ringHTML(pct, `${p.items.filter((i) => i.complete).length}/${p.items.length} met`)}
         <div class="kpis">
-          <div class="kpi"><span>Started</span><strong class="sm">${fmtDate(g.attemptStart)}</strong></div>
+          ${startKpiHTML(g, today)}
           <div class="kpi"><span>Days left</span><strong>${p.daysLeft}</strong></div>
           <div class="kpi"><span>Zero days</span><strong>${p.zeroDays}</strong></div>
           <div class="kpi"><span>Days logged</span><strong>${p.loggedDays}</strong></div>
@@ -1238,7 +1243,7 @@ function refreshTotals(root) {
     if (!totalEl.value.trim()) { hint.textContent = ''; return; }
     const per = row.querySelector('[name="p_per"]').value;
     const unit = row.querySelector('[name="p_unit"]').value.trim();
-    const value = L.perPeriodAmount(totalEl.value, days, per);
+    const value = L.perPeriodAmount(totalEl.value, days, per, unit);
     if (value === null) {
       hint.textContent = days ? 'Enter a total above zero.' : 'Pick the start date and the deadline (or days) to divide the total.';
       return;
@@ -1344,7 +1349,7 @@ function openCreate() {
         <p class="muted form-hint end-hint" data-end-hint>Give a deadline, or leave it empty and give the days.</p>
       </div>
       <div data-only="smart" hidden>
-        <p class="muted form-hint">${icon('target')} Describe the goal, then build the plan. You log your numbers every day.</p>
+        <h3 class="form-sub">${icon('target')} Describe the goal, then build the plan. You log your numbers every day.</h3>
         ${smartFieldsHTML({}, false)}
         ${planHTML([], false)}
       </div>
@@ -1489,6 +1494,7 @@ function openGoalSettings(g) {
         <label class="field"><span>Deadline</span>
           <input name="endDate" type="date" value="${esc(g.smart.endDate)}"></label>
         <p class="muted form-hint">Give a deadline, or the days. If you change the days, the deadline follows them.</p>
+        <h3 class="form-sub">${icon('target')} Describe the goal, then build the plan. You log your numbers every day.</h3>
         ${smartFieldsHTML(g.smart, false)}
         ${planHTML(g.smart.plan || [], false, !!g.smart.notes)}` : ''}
       <div class="field"><span>Icon</span>${iconDropdown(g.icon)}</div>

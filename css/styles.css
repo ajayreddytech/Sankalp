@@ -1221,3 +1221,23 @@ button.cell { font: inherit; padding: 0; }
 /* row 2: the unit gets the wider box, the period is next; the remove button is smaller */
 .plan-setup { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
 .plan-total-row .plan-remove { width: 34px; height: 34px; }
+
+/* phones only: the SMART plan row takes three rows, each input with room of its own
+   row 1: actionable.  row 2: measurable | total for the whole goal.  row 3: unit | period.  row 4: note. */
+@media (max-width: 720px) {
+  .plan-action { grid-column: 1 / -1; grid-row: 1; }
+  .plan-row > input[name="p_amount"] { grid-column: 1; grid-row: 2; }
+  .plan-cell { grid-column: 2; grid-row: 2; }
+  .plan-setup { grid-column: 1 / -1; grid-row: 3; }
+}
+
+/* journey form: a real subheading for the SMART description, and one size for all form text */
+.form .form-sub { font-size: 16px; font-weight: 700; color: var(--text); line-height: 1.35; margin: 26px 0 12px; }
+.form .form-sub i, .form .form-sub svg { width: 18px; height: 18px; color: #c4b5fd; vertical-align: -3px; margin-right: 6px; }
+.form .field > span, .form .field-hint, .form .field p.field-hint, .form .field small.field-hint,
+.form-hint, .check-row, .plan-head, .plan-cell .plan-total-hint, .end-hint { font-size: 13px; }
+
+/* every word on screen starts with a capital letter. This only changes how text is shown;
+   what is stored, and what you type into boxes, stays as it is. */
+body { text-transform: capitalize; }
+input, textarea, select, option { text-transform: none; }

@@ -288,16 +288,23 @@ export function cleanPlan(rows = [], { optional = false } = {}) {
   return cleaned.map((p) => (Number.isFinite(p.key) ? p : { ...p, key: next++ }));
 }
 
+// Units that count whole things (a blank unit is a plain count). Any other unit, such as hr, L or km, may be fractional.
+const WHOLE_UNITS = new Set(['', 'min', 'pomodoros', 'pages', 'steps', 'glasses', 'reps', 'sets', 'words', 'sessions', 'times', 'days', 'chapters']);
+
 /**
  * Divides a total over the whole goal into an amount per period.
- * e.g. 30 items over 10 days, per day, is 3. Returns null when the total or the days are not valid.
+ * Takes the period (per day, per week...), the days of the goal, and the unit into account:
+ * whole things round up, so the total is always reached; other units keep two decimals.
+ * e.g. 30 over 10 days, per day, is 3. Returns null when the total or the days are not valid.
  */
-export function perPeriodAmount(total, days, per) {
+export function perPeriodAmount(total, days, per, unit = '') {
   const t = Number(String(total ?? '').trim());
   const n = Math.floor(Number(days));
   if (!Number.isFinite(t) || t <= 0 || !Number.isFinite(n) || n < 1) return null;
   const periods = n / (PERIOD_DAYS[per] || 1);
-  return Math.round((t / periods) * 100) / 100;
+  const raw = t / periods;
+  if (WHOLE_UNITS.has(String(unit ?? '').trim().toLowerCase())) return Math.ceil(+raw.toFixed(6));
+  return Math.round(raw * 100) / 100;
 }
 
 /** Why and description are optional, both when creating and editing a journey: blank stays blank. */
@@ -763,6 +770,23 @@ export function nextActionText(goal, today) {
   if (j.next.date === day) return { kind: 'today', text: yesterday ? 'Check in for yesterday' : 'Check in for today' };
   if (j.next.date < day) return { kind: 'overdue', text: `Pending since ${j.next.date}` };
   return { kind: 'wait', text: 'Next day unlocks tomorrow' };
+}
+
+/**
+ * How a journey's start is worded on its page. "Started" once the start day has come.
+ * Before it, "Starting" with how far away: tomorrow, day after tomorrow, in N days, next month.
+ * text is null when only the date should show.
+ */
+export function startInfo(start, today = todayStr()) {
+  if (start <= today) return { word: 'Started', text: null };
+  const days = diffDays(today, start);
+  if (days === 1) return { word: 'Starting', text: 'Tomorrow' };
+  if (days === 2) return { word: 'Starting', text: 'Day After Tomorrow' };
+  if (days <= 13) return { word: 'Starting', text: `In ${days} Days` };
+  const [y, m] = today.split('-').map(Number);
+  const nextMonth = m === 12 ? `${y + 1}-01` : `${y}-${pad(m + 1)}`;
+  if (start.slice(0, 7) === nextMonth) return { word: 'Starting', text: 'Next Month' };
+  return { word: 'Starting', text: null };
 }
 
 export function dayNumber(goal, today) {
