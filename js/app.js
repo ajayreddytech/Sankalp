@@ -40,6 +40,13 @@ const icon = (name, cls = '') => `<i data-lucide="${esc(name)}" class="${cls}" a
 // Fields that must be filled carry this star. Create-journey fields are optional and have none.
 const REQ = '<b class="req" title="Required" aria-label="required">*</b>';
 const refreshIcons = () => window.lucide?.createIcons();
+// Free text, WhatsApp style: *bold*, _italic_, ~strike~ (and older **bold**). Line breaks show as line breaks.
+// Escaped first, so typed text never becomes markup. A marker must touch the words, as in WhatsApp.
+const rich = (s) => esc(s)
+  .replace(/\*\*([^*\n]+?)\*\*/g, '<b>$1</b>')
+  .replace(/(^|[^\w*])\*([^*\n]+?)\*(?=[^\w*]|$)/g, '$1<b>$2</b>')
+  .replace(/(^|[^\w_])_([^_\n]+?)_(?=[^\w_]|$)/g, '$1<i>$2</i>')
+  .replace(/(^|[^\w~])~([^~\n]+?)~(?=[^\w~]|$)/g, '$1<s>$2</s>');
 
 function fmtDate(s) {
   if (!s) return '';
@@ -73,6 +80,10 @@ function toast(msg, kind = 'info') {
   setTimeout(() => t.remove(), 3700);
 }
 
+// Free-text boxes grow to show all their text, so nothing hides behind a scroll.
+const fit = (ta) => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; };
+const fitAll = (root) => root.querySelectorAll('textarea[data-rich]').forEach(fit);
+
 function openModal({ title, body, footer = '', wide = false, onMount, onClose }) {
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
@@ -90,15 +101,30 @@ function openModal({ title, body, footer = '', wide = false, onMount, onClose })
 
   let closed = false;
   const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const onResize = () => fitAll(wrap);
   function close() {
     if (closed) return;
     closed = true;
     document.removeEventListener('keydown', onKey);
+    window.removeEventListener('resize', onResize);
     wrap.classList.add('leaving');
     setTimeout(() => wrap.remove(), 200);
     onClose?.();
   }
   document.addEventListener('keydown', onKey);
+  window.addEventListener('resize', onResize);
+  // Every free-text box in this dialog grows as you type. Text between ** ** shows bold in the preview under it.
+  wrap.addEventListener('input', (e) => {
+    const ta = e.target;
+    if (!ta.matches('textarea[data-rich]')) return;
+    fit(ta);
+    const pv = ta.nextElementSibling;
+    if (pv?.classList.contains('rich-preview')) {
+      pv.innerHTML = rich(ta.value);
+      pv.hidden = !hasBold(ta.value);
+    }
+  });
+  fitAll(wrap);
   wrap.addEventListener('click', (e) => {
     if (e.target === wrap || e.target.closest('[data-close]')) close();
   });
@@ -312,6 +338,53 @@ function wireDropdowns(root) {
 // scrolls when the pointer gets close to the top or bottom edge of the screen.
 
 const drag = { pending: null, el: null, ghost: null, x: 0, y: 0, offX: 0, offY: 0, raf: 0 };
+// Things that can be dragged to a new place: journey cards, and the journey icons in the rail.
+const DRAG_SEL = '.drag-item, .rail-drag';
+
+// Rail icons: with a mouse, press and move. On a phone, press and hold, so a swipe still scrolls the strip.
+const RAIL_HOLD_MS = 350;
+let railHold = null;               // { x, y, timer } while a touch press waits for its hold
+let railSuppressClickUntil = 0;    // a drag ends with a click on the icon; that click must not open the journey
+
+function cancelRailHold() {
+  if (railHold) { clearTimeout(railHold.timer); railHold = null; }
+}
+
+function onRailDown(e) {
+  if (e.button > 0) return;
+  const item = e.target.closest('.rail-goals .rail-drag');
+  if (!item) return;
+  if (e.pointerType === 'touch') {
+    const { clientX: x, clientY: y } = e;
+    railHold = {
+      x,
+      y,
+      timer: setTimeout(() => {
+        railHold = null;
+        drag.x = x;
+        drag.y = y;
+        startDrag(item, { clientX: x, clientY: y });
+      }, RAIL_HOLD_MS),
+    };
+    return;
+  }
+  drag.pending = { item, x: e.clientX, y: e.clientY };
+}
+
+// Saves the order the rail shows. It covers every active journey, whatever its type.
+async function saveRailOrder(container) {
+  const ids = [...container.querySelectorAll('.drag-item, .rail-drag')].map((n) => n.dataset.id);
+  const current = sortedActive().map((g) => g.id);
+  if (ids.join('|') === current.join('|')) { render(); return; }
+  const byId = new Map(state.goals.map((g) => [g.id, g]));
+  ids.forEach((id, pos) => { const g = byId.get(id); if (g) g.order = pos; });
+  render();
+  try {
+    await db.saveOrder(state.user.uid, ids);
+  } catch (err) {
+    toast(err.message || 'Could not save the order.', 'error');
+  }
+}
 
 function onDragDown(e) {
   if (!state.reorder || e.button > 0) return;
@@ -321,6 +394,8 @@ function onDragDown(e) {
 }
 
 function onDragMove(e) {
+  // A touch press that moves before its hold is a scroll, not a drag.
+  if (railHold && Math.hypot(e.clientX - railHold.x, e.clientY - railHold.y) > 8) cancelRailHold();
   if (!drag.pending && !drag.el) return;
   drag.x = e.clientX;
   drag.y = e.clientY;
@@ -362,7 +437,7 @@ function placeItem() {
   const container = el.parentElement;
   let best = null;
   let bestD = Infinity;
-  for (const n of container.querySelectorAll('.drag-item')) {
+  for (const n of container.querySelectorAll(DRAG_SEL)) {
     if (n === el) continue;
     const r = n.getBoundingClientRect();
     const d = (r.left + r.width / 2 - drag.x) ** 2 + (r.top + r.height / 2 - drag.y) ** 2;
@@ -381,7 +456,7 @@ function placeItem() {
 
 // Scrolls the page while the pointer rests near the top or bottom edge.
 function autoScroll() {
-  if (!drag.el) return;
+  if (!drag.el || drag.el.closest('#rail')) return;   // the rail scrolls itself; the page stays still
   const edge = 96;
   const top = 26;
   const vh = window.innerHeight;
@@ -398,6 +473,7 @@ function autoScroll() {
 
 // A journey moves only within its own type column. The other types keep their places in the shared order.
 async function endDrag() {
+  cancelRailHold();
   if (drag.pending) drag.pending = null;
   if (!drag.el) return;
   cancelAnimationFrame(drag.raf);
@@ -407,9 +483,14 @@ async function endDrag() {
   drag.ghost?.remove();
   drag.ghost = null;
   document.body.classList.remove('is-dragging');
-  const typeIds = [...container.querySelectorAll('.drag-item')].map((n) => n.dataset.id);
+  const typeIds = [...container.querySelectorAll(DRAG_SEL)].map((n) => n.dataset.id);
   drag.el = null;
   state.dragging = false;
+
+  if (container.classList.contains('rail-goals')) {
+    railSuppressClickUntil = Date.now() + 400;
+    return saveRailOrder(container);
+  }
 
   const byId = new Map(state.goals.map((g) => [g.id, g]));
   const type = byId.get(movedId)?.type;
@@ -436,10 +517,12 @@ function renderRail() {
   const active = sortedActive();
   const cls = (name, id) => (r.name === name && (!id || r.id === id) ? 'rail-item active' : 'rail-item');
   const goalItems = active.map((g) => `
-    <a class="${cls('goal', g.id)} goal-item" href="#/goal/${encodeURIComponent(g.id)}"
+    <a class="${cls('goal', g.id)} goal-item rail-drag" data-id="${esc(g.id)}" href="#/goal/${encodeURIComponent(g.id)}"
        data-tip="${esc(g.title)}" style="--c:${g.color}" aria-label="${esc(g.title)}">
       ${icon(g.icon)}
     </a>`).join('');
+  // Keep the phone bar's scroll position: rebuilding the rail would otherwise jump it back to the start.
+  const keepX = $('#rail .rail-goals')?.scrollLeft ?? 0;
   $('#rail').innerHTML = `
     <a class="${cls('home')}" href="#/home" data-tip="Check in" aria-label="Check in">${icon('calendar-check')}</a>
     <a class="${cls('journeys')}" href="#/journeys" data-tip="Your journeys" aria-label="Your journeys">${icon('route')}</a>
@@ -447,6 +530,8 @@ function renderRail() {
     <div class="rail-spacer"></div>
     <a class="${cls('accomplishments')}" href="#/accomplishments" data-tip="Accomplishments" aria-label="Accomplishments">${icon('medal')}</a>
     <button class="rail-item" data-action="account" data-tip="Account" aria-label="Account">${icon('circle-user-round')}</button>`;
+  const strip = $('#rail .rail-goals');
+  if (strip) strip.scrollLeft = keepX;
 }
 
 // ---------- views ----------
@@ -548,7 +633,7 @@ function smartLogHTML(g, today, pick = null) {
     const value = valueOf(it) ?? '';
     return `
       <label class="log-row">
-        <span class="log-k"><strong>${esc(it.action)}</strong><small class="muted">Goal ${fmtNum(it.amount)} ${esc(L.periodLabel(it.per))}</small></span>
+        <span class="log-k"><strong>${rich(it.action)}</strong>${g.smart?.notes && it.note ? `<span class="log-note">${rich(it.note)}</span>` : ''}<small class="muted">Goal ${fmtNum(it.amount)} ${esc(L.periodLabel(it.per, it.unit))}</small></span>
         <input type="number" min="0" step="any" inputmode="decimal" placeholder="0" value="${esc(value)}"
           data-log-index="${it.index}" data-log-date="${date}" aria-label="${esc(it.action)}">
       </label>`;
@@ -723,8 +808,8 @@ function goalHeadHTML(g) {
         <div>
           <p class="eyebrow">${typeName(g)}</p>
           <h1>${esc(g.title)}</h1>
-          ${g.description ? `<p class="desc">${esc(g.description)}</p>` : ''}
-          ${g.why ? `<p class="why"><strong>Why:</strong> ${esc(g.why)}</p>` : ''}
+          ${g.description ? `<p class="desc">${rich(g.description)}</p>` : ''}
+          ${g.why ? `<p class="why"><strong>Why:</strong> ${rich(g.why)}</p>` : ''}
         </div>
       </div>
       <button class="icon-btn" data-action="goal-settings" data-goal="${g.id}" aria-label="Edit journey">${icon('pencil')}</button>
@@ -891,7 +976,7 @@ function viewSmartGoal(g, today) {
   }).join('');
 
   const targets = p.items.length
-    ? p.items.map((it) => trackRowHTML(it, p.daysLeft)).join('')
+    ? p.items.map((it) => trackRowHTML(it, p.daysLeft, !!g.smart?.notes)).join('')
     : '<p class="muted">This goal has no plan yet. Add one from Edit.</p>';
 
   return `
@@ -901,6 +986,7 @@ function viewSmartGoal(g, today) {
       <div class="overview">
         ${ringHTML(pct, `${p.items.filter((i) => i.complete).length}/${p.items.length} met`)}
         <div class="kpis">
+          <div class="kpi"><span>Started</span><strong class="sm">${fmtDate(g.attemptStart)}</strong></div>
           <div class="kpi"><span>Days left</span><strong>${p.daysLeft}</strong></div>
           <div class="kpi"><span>Zero days</span><strong>${p.zeroDays}</strong></div>
           <div class="kpi"><span>Days logged</span><strong>${p.loggedDays}</strong></div>
@@ -933,8 +1019,8 @@ function viewSmartGoal(g, today) {
 }
 
 // One target: done so far, what is left, and what it takes per day from here to finish.
-function trackRowHTML(it, daysLeft) {
-  const per = L.periodLabel(it.per);
+function trackRowHTML(it, daysLeft, notes = false) {
+  const per = L.periodLabel(it.per, it.unit);
   const pct = Math.round(it.ratio * 100);
   let needText = 'Target met';
   if (!it.complete) {
@@ -944,7 +1030,7 @@ function trackRowHTML(it, daysLeft) {
   }
   return `
     <div class="track-row${it.complete ? ' met' : ''}">
-      <div class="track-main"><strong>${esc(it.action)}</strong><small class="muted">Goal ${fmtNum(it.amount)} ${esc(per)}</small></div>
+      <div class="track-main"><strong>${rich(it.action)}</strong>${notes && it.note ? `<span class="log-note">${rich(it.note)}</span>` : ''}<small class="muted">Goal ${fmtNum(it.amount)} ${esc(per)}</small></div>
       <div class="track-meter">
         <div class="bar"><span style="width:${pct}%"></span></div>
         <small>${fmtNum(it.done)} of ${fmtNum(it.total)} · ${pct}%</small>
@@ -1052,7 +1138,7 @@ function smartPlanHTML(g) {
       <div class="smart-plan">${L.SMART_FIELDS.map((f) => `
         <div class="smart-item">
           <span class="smart-k">${esc(f.label)}</span>
-          <p>${esc(g.smart[f.key])}</p>
+          <p>${rich(g.smart[f.key])}</p>
         </div>`).join('')}</div>
     </section>`;
 }
@@ -1060,49 +1146,70 @@ function smartPlanHTML(g) {
 // ---------- dialogs ----------
 
 // The three SMART text parts: Specific, Realistic, Time-bound.
+// A free-text box. Enter starts a new line and the box grows to fit. Typing **text** in it is shown bold in the preview under it.
+// True when the text has any formatting, so the live preview shows.
+const hasBold = (s) => rich(String(s ?? '')) !== esc(String(s ?? ''));
+function richBoxHTML({ name, value = '', max, req = false, placeholder = '', rows = 1, aria = '', cls = '' }) {
+  return `<textarea class="auto${cls ? ` ${cls}` : ''}" data-rich name="${name}" rows="${rows}" maxlength="${max}"${req ? ' required' : ''}${placeholder ? ` placeholder="${esc(placeholder)}"` : ''}${aria ? ` aria-label="${esc(aria)}"` : ''}>${esc(value)}</textarea>`
+    + `<span class="rich-preview" aria-hidden="true"${hasBold(value) ? '' : ' hidden'}>${rich(value)}</span>`;
+}
+
 function smartFieldsHTML(values = {}, req = true) {
   return L.SMART_FIELDS.map((f) => `
     <label class="field">
       <span>${esc(f.label)}${req ? ` ${REQ}` : ''}</span>
       <small class="muted field-hint">${esc(f.hint)}</small>
-      <textarea name="${f.key}" rows="2" maxlength="500"${req ? ' required' : ''}>${esc(values[f.key] || '')}</textarea>
+      ${richBoxHTML({ name: f.key, value: values[f.key] || '', max: 500, req, rows: 2 })}
     </label>`).join('');
 }
 
 function descriptionFieldHTML(value = '', req = true) {
   return `
     <label class="field"><span>Description${req ? ` ${REQ}` : ''}</span>
-      <textarea name="description" rows="2" maxlength="1000"${req ? ' required' : ''} placeholder="What this is, in a sentence or two">${esc(value)}</textarea></label>`;
+      ${richBoxHTML({ name: 'description', value, max: 1000, req, rows: 2, placeholder: 'What this is, in a sentence or two' })}</label>`;
 }
 
 function whyFieldHTML(value = '', req = true) {
   return `
     <label class="field"><span>Why${req ? ` ${REQ}` : ''}</span>
-      <textarea name="why" rows="2" maxlength="500"${req ? ' required' : ''} placeholder="The reason this matters to you">${esc(value)}</textarea></label>`;
+      ${richBoxHTML({ name: 'why', value, max: 500, req, rows: 2, placeholder: 'The reason this matters to you' })}</label>`;
 }
 
 // One row of the SMART plan: what to do on the left, how much and per day or week on the right.
+// The note box is always in the form (hidden until the notes switch is on), so a saved note is never lost.
 function planRowHTML(row = {}) {
   return `
     <div class="plan-row" data-plan-row>
-      <input name="p_action" maxlength="200" placeholder="e.g. Read a chapter" value="${esc(row.action || '')}" aria-label="Actionable item">
-      <div class="plan-measure">
-        <input name="p_amount" type="number" min="0" step="any" inputmode="decimal" placeholder="10" value="${esc(row.amount ?? '')}" aria-label="Measurable amount">
-        <input type="hidden" name="p_key" value="${row.key ?? ''}">
+      <div class="plan-action">${richBoxHTML({ name: 'p_action', value: row.action || '', max: 200, placeholder: 'e.g. Read a chapter', aria: 'Actionable item' })}</div>
+      <input name="p_amount" type="number" min="0" step="any" inputmode="decimal" placeholder="10" value="${esc(row.amount ?? '')}" aria-label="Measurable amount">
+      <div class="plan-setup">
+        <input name="p_unit" maxlength="20" list="unit-list" autocomplete="off" value="${esc(L.planUnit(row).unit)}" placeholder="unit" aria-label="Unit, for example hr or pomodoros (optional)">
         <select name="p_per" aria-label="How often">
-          ${L.PERIOD_OPTIONS.map(([k, label]) => `<option value="${k}"${(row.per || 'day') === k ? ' selected' : ''}>${label}</option>`).join('')}
+          ${L.PERIOD_OPTIONS.map(([k, label]) => `<option value="${k}" title="${esc(label)}"${L.planUnit(row).per === k ? ' selected' : ''}>${L.PERIOD_SHORT[k] || label}</option>`).join('')}
         </select>
-        <button type="button" class="icon-btn plan-remove" data-plan-remove aria-label="Remove this item">${icon('x')}</button>
+      </div>
+      <div class="plan-cell">
+        <div class="plan-total-row">
+          <input name="p_total" type="number" min="0" step="any" inputmode="decimal" placeholder="Total for the whole goal" aria-label="Total for the whole goal">
+          <button type="button" class="icon-btn plan-remove" data-plan-remove aria-label="Remove this item">${icon('x')}</button>
+        </div>
+        <small class="muted plan-total-hint" data-total-hint></small>
+      </div>
+      <input type="hidden" name="p_key" value="${row.key ?? ''}">
+      <div class="plan-note">
+        ${richBoxHTML({ name: 'p_note', value: row.note || '', max: 300, placeholder: 'Note: what this item means, in your own words', aria: 'Note for this item' })}
       </div>
     </div>`;
 }
 
-function planHTML(rows = [], req = true) {
+function planHTML(rows = [], req = true, notes = false) {
   return `
     <div class="field plan-field">
       <span>Plan: actionable and measurable${req ? ` ${REQ}` : ''}</span>
       <p class="muted field-hint">Left: what you will do. Right: how much, per day or per week. Add one row for each action.</p>
-      <div class="plan" data-plan>
+      <label class="check-row"><input type="checkbox" name="smartNotes" data-notes-toggle${notes ? ' checked' : ''}> Add a note to each actionable item</label>
+      <div class="plan${notes ? ' show-notes' : ''}" data-plan>
+        <datalist id="unit-list">${L.UNIT_SUGGESTIONS.map((u) => `<option value="${esc(u)}">`).join('')}</datalist>
         <div class="plan-head" aria-hidden="true"><span>Actionable</span><span>Measurable</span></div>
         <div class="plan-rows" data-plan-rows>${(rows.length ? rows : [{}]).map(planRowHTML).join('')}</div>
         <button type="button" class="btn ghost sm plan-add" data-plan-add>${icon('plus')}Add an item</button>
@@ -1110,7 +1217,49 @@ function planHTML(rows = [], req = true) {
     </div>`;
 }
 
+// Days the goal runs, from the dates in the open form. 0 while they are not valid yet.
+function goalDaysIn(root) {
+  const f = root.querySelector('form');
+  const val = (n) => f?.querySelector(`[name="${n}"]`)?.value || '';
+  const start = val('startDate') || L.todayStr();
+  try {
+    return L.smartLength(start, L.resolveSmartEnd(start, { endDate: val('endDate'), days: val('days') }));
+  } catch {
+    return 0;
+  }
+}
+
+// Each row with a total: the amount box becomes the total divided over the goal, per the row's period.
+function refreshTotals(root) {
+  const days = goalDaysIn(root);
+  root.querySelectorAll('[data-plan-row]').forEach((row) => {
+    const totalEl = row.querySelector('[name="p_total"]');
+    const hint = row.querySelector('[data-total-hint]');
+    if (!totalEl.value.trim()) { hint.textContent = ''; return; }
+    const per = row.querySelector('[name="p_per"]').value;
+    const unit = row.querySelector('[name="p_unit"]').value.trim();
+    const value = L.perPeriodAmount(totalEl.value, days, per);
+    if (value === null) {
+      hint.textContent = days ? 'Enter a total above zero.' : 'Pick the start date and the deadline (or days) to divide the total.';
+      return;
+    }
+    row.querySelector('[name="p_amount"]').value = value;
+    hint.textContent = `${totalEl.value} over ${days} days = ${value} ${L.periodLabel(per, unit)}`;
+  });
+}
+
+const TOTAL_TRIGGERS = ['p_total', 'p_per', 'p_unit', 'startDate', 'endDate', 'days'];
+
 function wirePlan(root) {
+  const onField = (e) => { if (TOTAL_TRIGGERS.includes(e.target.name)) refreshTotals(root); };
+  root.addEventListener('input', onField);
+  root.addEventListener('change', (e) => {
+    onField(e);
+    if (!e.target.matches('[data-notes-toggle]')) return;
+    const plan = root.querySelector('[data-plan]');
+    plan.classList.toggle('show-notes', e.target.checked);
+    fitAll(plan);
+  });
   root.addEventListener('click', (e) => {
     if (e.target.closest('[data-plan-add]')) {
       const rows = root.querySelector('[data-plan-rows]');
@@ -1119,7 +1268,9 @@ function wirePlan(root) {
         return;
       }
       rows.insertAdjacentHTML('beforeend', planRowHTML());
-      rows.lastElementChild.querySelector('input').focus();
+      const row = rows.lastElementChild;
+      fitAll(row);
+      row.querySelector('textarea').focus();
       return;
     }
     const rm = e.target.closest('[data-plan-remove]');
@@ -1132,13 +1283,16 @@ function planFromForm(fd) {
   const amounts = fd.getAll('p_amount');
   const pers = fd.getAll('p_per');
   const keys = fd.getAll('p_key');
-  return actions.map((action, i) => ({ action, amount: amounts[i], per: pers[i], key: keys[i] }));
+  const notes = fd.getAll('p_note');
+  const units = fd.getAll('p_unit');
+  return actions.map((action, i) => ({ action, amount: amounts[i], per: pers[i], key: keys[i], note: notes[i], unit: units[i] }));
 }
 
 function smartFromForm(fd) {
   return {
     ...Object.fromEntries(L.SMART_FIELDS.map((f) => [f.key, fd.get(f.key)])),
     plan: planFromForm(fd),
+    notes: fd.get('smartNotes') === 'on',
   };
 }
 
@@ -1209,7 +1363,10 @@ function openCreate() {
       wireDropdowns(w);
       wirePlan(w);
       form.addEventListener('change', (e) => {
-        if (e.target.name === 'type') showTypeFields(w, e.target.value);
+        if (e.target.name === 'type') {
+          showTypeFields(w, e.target.value);
+          fitAll(w);   // the SMART boxes were hidden when the dialog opened, so they could not be measured then
+        }
         syncAutoIcon(w);
       });
       form.addEventListener('input', () => {
@@ -1333,7 +1490,7 @@ function openGoalSettings(g) {
           <input name="endDate" type="date" value="${esc(g.smart.endDate)}"></label>
         <p class="muted form-hint">Give a deadline, or the days. If you change the days, the deadline follows them.</p>
         ${smartFieldsHTML(g.smart, false)}
-        ${planHTML(g.smart.plan || [], false)}` : ''}
+        ${planHTML(g.smart.plan || [], false, !!g.smart.notes)}` : ''}
       <div class="field"><span>Icon</span>${iconDropdown(g.icon)}</div>
       <div class="field"><span>Colour</span>${colorDropdown(g.color)}</div>
       <p class="error" data-error hidden></p>
@@ -1384,7 +1541,12 @@ function openGoalSettings(g) {
               ? L.resolveSmartEnd(start, { days: daysText })
               : L.normalizeEndDate(fd.get('endDate'), start);
             const parts = L.cleanSmart(Object.fromEntries(L.SMART_FIELDS.map((f) => [f.key, fd.get(f.key)])), { optional: true });
-            fields.smart = { ...parts, plan: L.cleanPlan(planFromForm(fd), { optional: true }), endDate: end };
+            fields.smart = {
+              ...parts,
+              plan: L.cleanPlan(planFromForm(fd), { optional: true }),
+              notes: fd.get('smartNotes') === 'on',
+              endDate: end,
+            };
             fields.targetDays = L.smartLength(start, end);
           }
           await db.updateGoalDetails(state.user.uid, g.id, fields);
@@ -1663,6 +1825,13 @@ async function boot() {
   window.addEventListener('pointerup', endDrag);
   window.addEventListener('pointercancel', endDrag);
   $('#rail').addEventListener('click', onRailClick);
+  $('#rail').addEventListener('pointerdown', onRailDown);
+  // The rail's links must not start the browser's own link drag, which would fight our drag.
+  $('#rail').addEventListener('dragstart', (e) => e.preventDefault());
+  // The click that ends a rail drag must not open the journey.
+  $('#rail').addEventListener('click', (e) => {
+    if (Date.now() < railSuppressClickUntil) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
   $('#modal-root').addEventListener('click', onModalRootClick);
   window.addEventListener('hashchange', render);
   document.addEventListener('click', (e) => {

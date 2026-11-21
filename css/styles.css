@@ -1051,7 +1051,7 @@ body.is-dragging * { cursor: grabbing !important; }
 .pace-panel.ahead h3 { color: #a7f3d0; }
 
 /* SMART plan row: what to do, how much, per day or week, remove. No unit box. */
-.plan-measure { grid-template-columns: minmax(0, 1fr) 112px 42px; }
+.plan-measure { grid-template-columns: minmax(0, 1fr) 150px 42px; }
 @media (max-width: 560px) {
   .plan-measure { grid-template-columns: minmax(0, 1fr) 104px 42px; }
 }
@@ -1167,3 +1167,57 @@ button.cell { font: inherit; padding: 0; }
 .plan-field, .plan, .plan-rows { min-width: 0; max-width: 100%; }
 .plan-rows { grid-template-columns: minmax(0, 1fr); }
 .form .plan-field { grid-template-columns: minmax(0, 1fr); }
+
+/* ---------- free text: boxes grow to fit, Enter is a new line, **bold** preview, SMART notes ---------- */
+.form textarea.auto { overflow: hidden; resize: none; line-height: 1.5; min-height: 0; }
+.form .field > .rich-preview, .rich-preview {
+  display: block; font-size: 15px; font-weight: 400; color: var(--text); line-height: 1.5; white-space: pre-line;
+  overflow-wrap: anywhere; padding: 0 4px;
+}
+.rich-preview[hidden] { display: none; }
+.check-row { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 14px; color: var(--muted); cursor: pointer; }
+.check-row input { width: 18px; height: 18px; accent-color: var(--accent); flex-shrink: 0; }
+.plan-row > textarea { min-width: 0; }
+.plan-note { grid-column: 1 / -1; display: grid; gap: 6px; min-width: 0; }
+.plan:not(.show-notes) .plan-note { display: none; }
+.log-note { display: block; font-size: 13px; line-height: 1.4; color: var(--muted); white-space: pre-line; overflow-wrap: anywhere; }
+.desc, .why, .smart-item p { white-space: pre-line; }
+.desc b, .why b, .smart-item b, .track-main b, .log-k b { font-weight: 750; color: inherit; }
+
+/* SMART plan: the total for the whole goal, divided into the amount above */
+.plan-total {
+  grid-column: 1 / -1; display: grid; gap: 6px; padding: 10px 12px; border-radius: 14px;
+  background: #0b0b13; border: 1px dashed var(--line-strong); min-width: 0;
+}
+.plan-total-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.plan-total-label input { width: 140px; max-width: 45%; padding: 9px 12px; font-size: 15px; }
+.plan-total-hint { font-size: 12px; line-height: 1.4; color: #c4b5fd; min-height: 0; }
+.plan-total-hint:empty { display: none; }
+
+/* rail icons can be dragged to a new place (mouse, or press and hold on a phone) */
+.rail-drag { cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+
+/* SMART plan row: amount | unit | period | remove, all on one line */
+.plan-measure { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 118px 42px; }
+@media (max-width: 720px) {
+  .plan-measure { grid-template-columns: 58px minmax(0, 1fr) 96px 34px; }
+}
+@media (max-width: 400px) {
+  .plan-measure { grid-template-columns: 52px minmax(0, 1fr) 88px 32px; }
+}
+
+/* SMART plan row, in two rows then a note:
+   row 1: actionable | measurable.  row 2: period and unit | total for the whole goal (and remove).  row 3: note. */
+.form .plan-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 8px; }
+.plan-action, .plan-setup, .plan-cell { min-width: 0; display: grid; gap: 6px; align-content: start; }
+.plan-setup { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.plan-setup input, .plan-setup select { min-width: 0; }
+.plan-total-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.plan-total-row input { flex: 1 1 auto; min-width: 0; }
+.plan-total-row .plan-remove { flex-shrink: 0; width: 42px; height: 42px; }
+.plan-cell .plan-total-hint { font-size: 12px; line-height: 1.4; color: #c4b5fd; }
+.plan-cell .plan-total-hint:empty { display: none; }
+
+/* row 2: the unit gets the wider box, the period is next; the remove button is smaller */
+.plan-setup { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
+.plan-total-row .plan-remove { width: 34px; height: 34px; }

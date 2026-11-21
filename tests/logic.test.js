@@ -5,7 +5,7 @@ import {
   newGoalData, applyCheckin, applyAbandon, journey, totalCells, addDays, diffDays, notAccomplished, accomplished,
   suggestIcon, redoData, redoDefaults, exceptionAvailability, cleanPlan, resolveSmartEnd, smartProgress, titleCase,
   applySmartLog, smartPhase, sortByOrder, nextOrder, optionalText, nextActionText, checkinSummary, cleanSankalpaDays,
-  cleanSmart,
+  cleanSmart, checkinDay, dayNumber, periodLabel, perPeriodAmount, isNextMorning,
 } from '../js/logic.js';
 
 const WHY = 'It makes me feel steady';
@@ -277,8 +277,8 @@ test('a SMART goal text parts and plan are optional, but it still needs a valid 
 test('plan rows: blank rows are dropped, amounts must be above zero, per defaults to day, no unit', () => {
   const plan = cleanPlan([{ action: 'read chapters', amount: '10', per: 'week' }, { action: '', amount: '' }, { action: 'sleep early', amount: 1 }]);
   assert.deepEqual(plan, [
-    { action: 'Read Chapters', amount: 10, unit: '', per: 'week', key: 0 },
-    { action: 'Sleep Early', amount: 1, unit: '', per: 'day', key: 1 },
+    { action: 'Read Chapters', amount: 10, unit: '', per: 'week', note: '', key: 0 },
+    { action: 'Sleep Early', amount: 1, unit: '', per: 'day', note: '', key: 1 },
   ]);
   assert.throws(() => cleanPlan([{ action: 'Read', amount: 0 }]), /above zero/);
   assert.throws(() => cleanPlan([{ action: '', amount: 5 }]), /describe/);
@@ -525,4 +525,113 @@ test('a sankalpa length can change, but not below the days already done', () => 
   assert.equal(cleanSankalpaDays(g, '20'), 20);
   assert.throws(() => cleanSankalpaDays(g, '1'), /already done/);
   assert.throws(() => cleanSankalpaDays(g, '0'), /between/);
+});
+
+test('Kāma Digvijaya Saṅkalpaṁ is checked in the morning after its day, in any type', () => {
+  const title = 'Kāma Digvijaya Saṅkalpaṁ';
+  assert.equal(checkinDay({ title }, '2026-01-05'), '2026-01-04');
+  assert.equal(checkinDay({ title: 'kama  digvijaya sankalpam' }, '2026-01-05'), '2026-01-04');
+  assert.equal(checkinDay({ title: 'Read' }, '2026-01-05'), '2026-01-05');
+
+  const g = { id: 'k', ...newGoalData({ type: 'sankalpa', title, days: 3, now: at('2026-01-01') }) };
+  // On the start day nothing is open: the first day is recorded tomorrow morning.
+  assert.equal(journey(g, '2026-01-01').next, null);
+  assert.equal(nextActionText(g, '2026-01-01').kind, 'wait');
+  // Next morning, yesterday is the open day. Today stays locked.
+  assert.equal(journey(g, '2026-01-02').next.date, '2026-01-01');
+  assert.equal(nextActionText(g, '2026-01-02').text, 'Check in for yesterday');
+  assert.throws(() => applyCheckin(g, '2026-01-02', 'yes', at('2026-01-02')), /not open/);
+  const res = applyCheckin(g, '2026-01-01', 'yes', at('2026-01-02'));
+  assert.equal(res.patch.checkins['2026-01-01'], 'done');
+  assert.equal(checkinSummary([{ ...g, checkins: res.patch.checkins }], '2026-01-02').filled, 1);
+});
+
+test('a SMART goal named Kāma Digvijaya Saṅkalpaṁ logs yesterday, never today', () => {
+  const plan = cleanPlan([{ action: 'Chant', amount: 10, per: 'day' }]);
+  const g = {
+    id: 's',
+    ...newGoalData({
+      type: 'smart', title: 'Kāma Digvijaya Saṅkalpaṁ', days: 3, startDate: '2026-01-01', now: at('2026-01-01'),
+      smart: { specific: 'Chant daily', realistic: 'Ten minutes', timeBound: 'Three days', plan },
+    }),
+  };
+  assert.throws(() => applySmartLog(g, [{ index: 0, date: '2026-01-01', value: 5 }], at('2026-01-01')), /not open/);
+  const res = applySmartLog(g, [{ index: 0, date: '2026-01-01', value: 5 }], at('2026-01-02'));
+  assert.equal(res.patch.logs['2026-01-01'][0], 5);
+  assert.equal(nextActionText({ ...g, logs: res.patch.logs }, '2026-01-02').text, 'Log yesterday');
+});
+
+test('other journeys still check in on the same day', () => {
+  const g = newGoal('2026-01-01');
+  assert.equal(nextActionText(g, '2026-01-01').text, 'Check in for today');
+});
+
+test('plan items keep an optional note, and bold markers survive title case', () => {
+  const plan = cleanPlan([{ action: 'read chapters', amount: 2, per: 'day', note: 'one chapter in the morning' }]);
+  assert.equal(plan[0].note, 'One Chapter in the Morning');
+  assert.equal(cleanPlan([{ action: 'Read', amount: 1 }])[0].note, '');
+  assert.equal(titleCase('**morning routine**\nwake at 5'), '**Morning Routine**\nWake at 5');
+  assert.equal(titleCase('plain text'), 'Plain Text');
+});
+
+test('the notes switch is stored on a SMART goal', () => {
+  const plan = cleanPlan([{ action: 'Read', amount: 1 }]);
+  const base = { specific: 'A', realistic: 'B', timeBound: 'C', plan };
+  const on = newGoalData({ type: 'smart', title: 'Notes on', days: 2, smart: { ...base, notes: true }, now: at('2026-01-01') });
+  const off = newGoalData({ type: 'smart', title: 'Notes off', days: 2, smart: base, now: at('2026-01-01') });
+  assert.equal(on.smart.notes, true);
+  assert.equal(off.smart.notes, false);
+});
+
+test('a next-morning journey counts only the days checked in, not the calendar', () => {
+  const g = { id: 'k', ...newGoalData({ type: 'sankalpa', title: 'Kāma Digvijaya Saṅkalpaṁ', days: 10, now: at('2026-01-01') }) };
+  assert.equal(dayNumber(g, '2026-01-09'), 1);            // nothing checked in yet, however many days passed
+  const res = applyCheckin(g, '2026-01-01', 'yes', at('2026-01-02'));
+  const after = { ...g, checkins: res.patch.checkins };
+  assert.equal(dayNumber(after, '2026-01-09'), 1);       // still only one check-in
+  assert.equal(dayNumber({ ...g, title: 'Read' }, '2026-01-09'), 9);   // other journeys keep the calendar count
+});
+
+test('hours per day and Pomodoros per day plan items count per day', () => {
+  const plan = cleanPlan([{ action: 'Deep work', amount: 2, per: 'day', unit: 'hr' }, { action: 'Focus', amount: 4, per: 'pomodoros-day' }]);
+  assert.deepEqual(plan.map((p) => [p.per, p.unit]), [['day', 'hr'], ['day', 'pomodoros']]);   // old choice still reads as a unit
+  assert.equal(periodLabel('day', 'pomodoros'), 'pomodoros per day');
+  assert.equal(periodLabel('week'), 'per week');
+  assert.equal(cleanPlan([{ action: 'Read', amount: 1, per: 'bogus' }])[0].per, 'day');
+  const g = { id: 'h', ...newGoalData({ type: 'smart', title: 'Deep work', days: 5, now: at('2026-01-01'), smart: { specific: 'A', realistic: 'B', timeBound: 'C', plan } }) };
+  const p = smartProgress({ ...g, logs: { '2026-01-01': { 0: 1, 1: 4 } } }, '2026-01-01');
+  assert.equal(p.items[0].total, 10);   // 2 hours a day for 5 days
+  assert.equal(p.items[1].total, 20);   // 4 Pomodoros a day for 5 days
+});
+
+test('a total over the whole goal divides into an amount per period', () => {
+  assert.equal(perPeriodAmount(30, 10, 'day'), 3);          // 30 items over 10 days is 3 a day
+  assert.equal(perPeriodAmount(10, 30, 'day'), 0.33);       // rounded to two places
+  assert.equal(perPeriodAmount(12, 14, 'week'), 6);         // 12 over two weeks is 6 a week
+  assert.equal(perPeriodAmount(20, 5, 'hours-day'), 4);     // hours per day works the same
+  assert.equal(perPeriodAmount('', 10, 'day'), null);
+  assert.equal(perPeriodAmount(5, 0, 'day'), null);
+  assert.equal(perPeriodAmount(-2, 10, 'day'), null);
+});
+
+test('a journey that starts in the future shows no day until its start day', () => {
+  const g = { id: 'f', ...newGoalData({ type: 'habit', title: 'Read', now: at('2026-01-10') }) };
+  g.attemptStart = '2026-01-15';
+  assert.equal(dayNumber(g, '2026-01-10'), 0);
+  assert.equal(dayNumber(g, '2026-01-14'), 0);
+  assert.equal(dayNumber(g, '2026-01-15'), 1);
+  assert.equal(dayNumber(g, '2026-01-16'), 2);
+});
+
+test('the name matches in any capitals, with or without accents and punctuation', () => {
+  for (const title of ['KĀMA DIGVIJAYA SAṄKALPAṀ', 'kama digvijaya sankalpam', 'Kama Digvijaya Sankalpam', 'Kama-Digvijaya, Sankalpam!', '  kāma   digvijaya saṅkalpaṁ ']) {
+    assert.equal(isNextMorning({ title }), true, title);
+  }
+  assert.equal(isNextMorning({ title: 'Kama Digvijaya Sankalpa' }), false);
+});
+
+test('WhatsApp-style markers keep their first letter capitalised', () => {
+  assert.equal(titleCase('_italic_ text'), '_Italic_ Text');
+  assert.equal(titleCase('~strike~ word'), '~Strike~ Word');
+  assert.equal(titleCase('*bold* word'), '*Bold* Word');
 });
