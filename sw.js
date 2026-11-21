@@ -1,6 +1,6 @@
 // SANKALP service worker: caches the app shell so it opens instantly and works offline for viewing.
 // It never caches Firestore or Auth traffic, so your journey data always comes from the server.
-const VERSION = 'sankalp-v34';
+const VERSION = 'sankalp-v45';
 const SHELL = [
   '/',
   '/index.html',
@@ -8,6 +8,7 @@ const SHELL = [
   '/js/app.js',
   '/js/db.js',
   '/js/logic.js',
+  '/js/markdown.js',
   '/js/choices.js',
   '/js/config.js',
   '/manifest.webmanifest',
@@ -45,7 +46,19 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Static assets and CDN libraries: stale-while-revalidate.
+  // Our own code and styles: network first, so a release reaches the user on the next load.
+  // The cached copy is used only when offline.
+  if (sameOrigin) {
+    e.respondWith(
+      fetch(req).then((res) => {
+        if (res.ok) caches.open(VERSION).then((cache) => cache.put(req, res.clone()));
+        return res;
+      }).catch(() => caches.match(req)),
+    );
+    return;
+  }
+
+  // CDN libraries (versioned URLs that rarely change): stale-while-revalidate.
   e.respondWith(
     caches.open(VERSION).then((cache) =>
       cache.match(req).then((hit) => {

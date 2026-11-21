@@ -5,6 +5,6 @@
   "type": "module",
   "description": "SANKALP habit and sankalpa tracker (PWA on Firebase)",
   "scripts": {
-    "test": "node --test tests/logic.test.js"
+    "test": "node --test tests/logic.test.js tests/markdown.test.js"
   }
 }

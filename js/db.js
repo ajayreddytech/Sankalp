@@ -11,7 +11,7 @@ import {
   runTransaction, deleteDoc, writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js';
 import { firebaseConfig } from './config.js';
-import { applyCheckin, applyAbandon, applySmartLog } from './logic.js';
+import { applyCheckin, applyAbandon, applyDelete, applySmartLog } from './logic.js';
 
 export const configured = !firebaseConfig.apiKey.startsWith('YOUR_');
 
@@ -134,6 +134,17 @@ export async function abandon(uid, goalId) {
     const goal = { id: snap.id, ...snap.data() };
     const patch = applyAbandon(goal, new Date());
     tx.update(ref, patch);
+  });
+}
+
+// Moves one journey to Deleted. Nothing is erased: its history stays, and it can be redone.
+export async function softDeleteGoal(uid, goalId) {
+  const ref = doc(goalsCol(uid), goalId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Journey not found.');
+    const goal = { id: snap.id, ...snap.data() };
+    tx.update(ref, applyDelete(goal, new Date()));
   });
 }
 

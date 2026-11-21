@@ -176,6 +176,7 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
 .due-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .due-title strong { display: block; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .due-title small { color: var(--muted); font-size: 12px; }
+.overdue-tag { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; vertical-align: middle; background: rgba(251, 113, 133, 0.14); color: #fda4af; }
 .due-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .all-clear {
   display: flex; align-items: center; gap: 12px; padding: 18px; border-radius: 20px;
@@ -385,6 +386,39 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
   box-shadow: 0 0 16px -2px rgba(52, 211, 153, 0.55);
 }
 .cell.s-done svg, .cell.s-done i { stroke-width: 3; }
+/* SMART day: the circle fills from the bottom up to its percentage, with the percentage on top.
+   The top edge is a tide: two crests roll sideways at different speeds and rise and fall gently. */
+.cell.s-partial {
+  color: #fff; border-color: rgba(52, 211, 153, 0.45); font-weight: 750;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  background: rgba(255, 255, 255, 0.06); overflow: hidden;
+}
+.cell.s-partial .tide {
+  position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--pct, 0) * 1%);
+  background: linear-gradient(180deg, #34d399, #059669 75%);
+  transition: height 0.8s var(--ease);
+}
+.cell.s-partial .wave {
+  position: absolute; left: 0; right: 0; top: -8px; height: 16px; overflow: hidden;
+  animation: tide-bob 3.2s ease-in-out infinite;
+}
+/* One smooth wave (crest, trough, crest) spans the width of the circle, and it repeats seamlessly. */
+.cell.s-partial .wave::before, .cell.s-partial .wave::after {
+  content: ''; position: absolute; top: 0; left: 0; width: 200%; height: 100%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 16' preserveAspectRatio='none'%3E%3Cpath d='M0 8 C10 1 20 1 30 8 S50 15 60 8 V16 H0Z' fill='%2334d399'/%3E%3C/svg%3E") 0 0 / 50% 100% repeat-x;
+}
+.cell.s-partial .wave::before { animation: tide-flow 3.6s linear infinite; }
+.cell.s-partial .wave::after {
+  top: 2px; opacity: 0.4; animation: tide-flow-back 5.2s linear infinite;
+}
+.cell.s-partial .num { position: relative; z-index: 1; }
+@keyframes tide-flow { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes tide-flow-back { from { transform: translateX(-50%); } to { transform: translateX(0); } }
+@keyframes tide-bob { 50% { transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) {
+  .cell.s-partial .wave, .cell.s-partial .wave::before, .cell.s-partial .wave::after { animation: none; }
+}
+.cell.s-missed { color: #fda4af; border-color: rgba(251, 113, 133, 0.35); background: rgba(251, 113, 133, 0.14); }
 .cell.s-exception {
   color: #3b2400; border-color: transparent;
   background: radial-gradient(circle at 30% 25%, #fef3c7, #f59e0b 65%, #b45309);
@@ -1037,6 +1071,8 @@ body.is-dragging * { cursor: grabbing !important; }
 
 /* SMART day map legend */
 .dot.q { background: transparent; border: 2px dashed rgba(255, 255, 255, 0.35); }
+.dot.p { background: linear-gradient(to top, #10b981 60%, rgba(255, 255, 255, 0.12) 0); }
+.dot.m { background: rgba(251, 113, 133, 0.35); border: 1px solid rgba(251, 113, 133, 0.6); }
 
 /* pace note */
 .pace-panel { border-color: rgba(139, 92, 246, 0.3); }
@@ -1067,6 +1103,10 @@ body.is-dragging * { cursor: grabbing !important; }
 .checkin-bar { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
 .stats.summary { justify-content: center; margin-top: 0; }
 .stat.hot { border-color: rgba(251, 191, 36, 0.45); background: rgba(251, 191, 36, 0.08); }
+/* the Check In counts are buttons: tap to open that list, tap again to close it */
+.stat-btn { font: inherit; color: inherit; cursor: pointer; text-align: center; justify-content: center; }
+.stat-btn:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
+.stat-btn.on { border-color: rgba(139, 92, 246, 0.6); box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25); }
 .stat.hot > div strong { color: #fde68a; }
 a.stat.link { cursor: pointer; transition: border-color 0.2s, transform 0.2s var(--ease); }
 a.stat.link:hover { border-color: rgba(196, 181, 253, 0.5); transform: translateY(-1px); }
@@ -1104,12 +1144,17 @@ a.stat.link:hover { border-color: rgba(196, 181, 253, 0.5); transform: translate
 .log-ok { background: rgba(52, 211, 153, 0.1); border: 1px solid rgba(52, 211, 153, 0.3); color: #a7f3d0; }
 .log-need svg, .log-need i, .log-ok svg, .log-ok i { width: 17px; height: 17px; flex-shrink: 0; margin-top: 1px; }
 
-/* SMART day map: tapping a finished day picks it for editing */
-button.cell { font: inherit; padding: 0; }
-.cell.picked { outline: 2px solid var(--accent-2); outline-offset: 3px; }
 .pace-status { font-size: 11px; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; color: #c4b5fd; margin-bottom: 4px; }
 .pace-panel.behind .pace-status { color: var(--amber); }
 .pace-panel.ahead .pace-status { color: var(--green); }
+
+/* daily brief: focus, doing well, today, insights */
+.brief-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; margin-top: 14px; }
+.brief-col { min-width: 0; }
+.brief-col h4 { margin: 0 0 6px; font-size: 12px; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; color: #c4b5fd; }
+.brief-col ul { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
+.brief-col li strong { color: var(--text); }
+@media (max-width: 600px) { .brief-grid { grid-template-columns: 1fr; } }
 
 /* miss record: redo sits under the outcome */
 .type-col .miss-card .redo-btn { align-self: flex-start; }
@@ -1142,6 +1187,7 @@ button.cell { font: inherit; padding: 0; }
 .rec-status.ok { background: rgba(52, 211, 153, 0.14); color: #6ee7b7; }
 .rec-status.failed { background: rgba(251, 113, 133, 0.14); color: #fda4af; }
 .rec-status.abandoned { background: rgba(255, 255, 255, 0.07); color: var(--muted); }
+.rec-status.deleted { background: rgba(255, 255, 255, 0.07); color: var(--muted); }
 .type-col .rec-card { flex-direction: column; align-items: stretch; }
 .type-col .rec-side { justify-content: space-between; }
 
@@ -1232,7 +1278,7 @@ button.cell { font: inherit; padding: 0; }
 }
 
 /* journey form: a real subheading for the SMART description, and one size for all form text */
-.form .form-sub { font-size: 16px; font-weight: 700; color: var(--text); line-height: 1.35; margin: 26px 0 12px; }
+.form .form-sub { font-size: 16px; font-weight: 400; color: var(--muted); line-height: 1.35; margin: 26px 0 12px; text-align: center; }
 .form .form-sub i, .form .form-sub svg { width: 18px; height: 18px; color: #c4b5fd; vertical-align: -3px; margin-right: 6px; }
 .form .field > span, .form .field-hint, .form .field p.field-hint, .form .field small.field-hint,
 .form-hint, .check-row, .plan-head, .plan-cell .plan-total-hint, .end-hint { font-size: 13px; }
@@ -1241,3 +1287,44 @@ button.cell { font: inherit; padding: 0; }
    what is stored, and what you type into boxes, stays as it is. */
 body { text-transform: capitalize; }
 input, textarea, select, option { text-transform: none; }
+
+/* SMART goal descriptions: a Markdown switch above the box, a live preview under it when on */
+.md-field { display: grid; gap: 8px; margin-bottom: 18px; min-width: 0; }
+.md-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.md-title { font-size: 13px; color: var(--muted); font-weight: 600; }
+.md-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.md-toggle input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+.md-field > .auto { min-width: 0; }
+.form .form-rule { border: 0; border-top: 1px solid var(--line); margin: 30px 0 0; }
+.form .form-sub { margin-top: 16px; }
+.md-preview { display: none; margin-top: 8px; padding: 10px 12px; border-radius: 12px; border: 1px dashed var(--line); font-size: 14px; line-height: 1.5; color: var(--text); overflow-wrap: anywhere; }
+.md-field.md-on > .md-preview { display: block; }
+.md-field.md-on > .rich-wrap { display: none !important; }
+/* previews under a description: about two lines, with a button to show all of it */
+.preview-body { overflow: hidden; max-height: 3.3em; }
+.preview-wrap.open > .preview-body { max-height: none; }
+.preview-toggle { display: block; margin: 0 0 4px; padding: 0; background: none; border: 0; color: #c4b5fd; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.preview-toggle[hidden] { display: none; }
+.md-preview p, .md-preview ul, .md-preview ol, .md-preview blockquote, .md-preview h3, .md-preview h4, .md-preview h5 { margin: 0 0 6px; }
+.md-preview h3, .md-preview h4, .md-preview h5 { font-size: 15px; font-weight: 700; }
+.md-preview blockquote { border-left: 3px solid var(--accent-2); padding-left: 10px; color: var(--muted); }
+.md-preview ul, .md-preview ol { padding-left: 20px; }
+.md-preview code { background: rgba(255, 255, 255, 0.08); padding: 1px 5px; border-radius: 6px; font-size: 13px; }
+
+/* the SMART goal page: markdown description, links are live */
+.desc.md { white-space: normal; text-align: left; max-width: 60ch; }
+.desc.md p, .desc.md ul, .desc.md ol, .desc.md blockquote, .desc.md h3, .desc.md h4, .desc.md h5 { margin: 0 0 8px; }
+.desc.md h3, .desc.md h4, .desc.md h5 { font-size: 16px; font-weight: 700; }
+.desc.md ul, .desc.md ol { padding-left: 22px; }
+.desc.md blockquote { border-left: 3px solid var(--accent-2); padding-left: 12px; color: var(--muted); }
+.desc.md code { background: rgba(255, 255, 255, 0.08); padding: 1px 5px; border-radius: 6px; font-size: 13px; }
+.desc.md a { color: #c4b5fd; text-decoration: underline; text-underline-offset: 2px; word-break: break-word; }
+
+/* Check In, SMART goal rows only: icon on top, then the title, then what is pending. All centred. */
+.due-row.smart-due, .type-col .due-row.smart-due { text-align: center; }
+.due-row.smart-due .due-title, .type-col .due-row.smart-due .due-title { flex-direction: column; align-items: center; text-align: center; gap: 8px; }
+.due-row.smart-due .due-title > span:last-child, .type-col .due-row.smart-due .due-title > span:last-child { display: grid; justify-items: center; gap: 4px; }
+.due-row.smart-due .due-title strong, .type-col .due-row.smart-due .due-title strong { white-space: normal; text-align: center; }
+.due-row.smart-due .due-title small, .type-col .due-row.smart-due .due-title small { display: block; text-align: center; }
+.due-row.smart-due .goal-icon.sm, .type-col .due-row.smart-due .goal-icon.sm { margin: 0 auto; }
+.md-toggle[hidden] { display: none; }

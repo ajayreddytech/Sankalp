@@ -13,12 +13,21 @@ export const SANKALPA_MAX_DAYS = 365;
 export const SMART_MAX_DAYS = 365;
 export const MAX_PLAN_ROWS = 10;
 export const WEEK_DAYS = 7;
-export const HABIT_STREAK = 3;          // sankalpa: accomplished this many times in a row, no gap day, becomes a habit
+export const MAX_PROJECTED_DAYS = 730;  // a SMART projection never runs more than this many days past today
 
 // How often a SMART plan item is measured, in days. "per day" is 1, "per month" is 30.
-export const PERIOD_DAYS = { day: 1, week: 7, biweekly: 14, month: 30 };
+// weekday and weekend count one day each, but only on those days of the week (see CALENDAR_PERIODS).
+export const PERIOD_DAYS = {
+  day: 1, weekday: 1, weekend: 1, twodays: 2, threedays: 3, week: 7, biweekly: 14,
+  month: 30, quarter: 90, sixmonths: 180, year: 365,
+};
+// Periods that depend on the day of the week: the weekdays they count (0 = Sunday, 6 = Saturday).
+export const CALENDAR_PERIODS = { weekday: [1, 2, 3, 4, 5], weekend: [0, 6] };
 export const PERIOD_OPTIONS = [
-  ['day', 'per day'], ['week', 'per week'], ['biweekly', 'per 2 weeks'], ['month', 'per month'],
+  ['day', 'per day'], ['weekday', 'per weekday'], ['weekend', 'per weekend'],
+  ['twodays', 'per 2 days'], ['threedays', 'per 3 days'], ['week', 'per week'],
+  ['biweekly', 'per 2 weeks'], ['month', 'per month'], ['quarter', 'per quarter'],
+  ['sixmonths', 'per 6 months'], ['year', 'per year'],
 ];
 // Units a plan item can count in (hours, Pomodoros...). Blank means a plain count. Any unit can be typed.
 export const UNIT_SUGGESTIONS = ['hr', 'min', 'pomodoros', 'pages', 'steps', 'km', 'glasses', 'L', 'kcal', 'reps', 'sets', 'words', 'sessions', 'times', 'days', 'chapters'];
@@ -35,7 +44,10 @@ export function planUnit(p = {}) {
   return { per: PERIOD_DAYS[p.per] ? p.per : 'day', unit: String(p.unit ?? '').trim().slice(0, 20) };
 }
 // Short names for the period dropdown in the SMART plan, so it fits a phone. Same meaning as the long names.
-export const PERIOD_SHORT = { day: '/day', week: '/wk', biweekly: '/2wk', month: '/mo' };
+export const PERIOD_SHORT = {
+  day: '/day', weekday: '/wkday', weekend: '/wkend', twodays: '/2d', threedays: '/3d', week: '/wk',
+  biweekly: '/2wk', month: '/mo', quarter: '/qtr', sixmonths: '/6mo', year: '/yr',
+};
 // "per day", or "hr per day" when the item has a unit.
 export const periodLabel = (per, unit = '') => {
   const label = (PERIOD_OPTIONS.find(([k]) => k === per) || PERIOD_OPTIONS[0])[1];
@@ -43,13 +55,13 @@ export const periodLabel = (per, unit = '') => {
 };
 
 export const TYPES = ['habit', 'sankalpa', 'smart'];
-export const TYPE_LABEL = { habit: 'Habit', sankalpa: 'Sankalpa', smart: 'SMART goal' };
+export const TYPE_LABEL = { habit: 'Habit', sankalpa: 'Sankalpa', smart: 'SMART Goal' };
 
 // The text parts of a SMART goal. Actionable and measurable are the plan table instead.
 export const SMART_FIELDS = [
-  { key: 'specific', label: 'Specific', hint: 'What exactly will you do, and where or with whom?' },
-  { key: 'realistic', label: 'Realistic', hint: 'Why is this doable with your time, skills and resources?' },
-  { key: 'timeBound', label: 'Time-bound', hint: 'When does it start and end, and why that deadline?' },
+  { key: 'specific', label: 'Specific', hint: 'What exactly, where, with whom?' },
+  { key: 'realistic', label: 'Realistic', hint: 'Why is it doable for you?' },
+  { key: 'timeBound', label: 'Time-bound', hint: 'When it starts and ends.' },
 ];
 
 // ---------- date helpers ----------
@@ -84,7 +96,10 @@ const NEXT_MORNING_NAME = 'kama digvijaya sankalpam';
 const foldName = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
+// A journey chosen in the form ("check in the next day") is saved as nextMorning. Journeys saved before
+// that option existed have no setting, so the name decides for them.
 export function isNextMorning(goal) {
+  if (typeof goal?.nextMorning === 'boolean') return goal.nextMorning;
   return foldName(goal?.title) === NEXT_MORNING_NAME;
 }
 
@@ -227,16 +242,23 @@ export function resolveSmartEnd(startDate, { endDate = '', days = '' } = {}) {
 // Small words stay lower case in a title, unless they start it.
 const SMALL_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'into', 'nor', 'of', 'on', 'or', 'per', 'the', 'to', 'via', 'vs', 'with']);
 
-/** Capitalises the first letter of each word, keeping small words lower case. Everything we store goes through this. */
+/**
+ * Capitalises the first letter of each word, keeping small words lower case. Everything we store goes through this.
+ * Words the user wrote on purpose are left exactly as typed: links, emails, names with capitals (iPhone, eBay),
+ * and acronyms (USA, HR). A word after a full stop starts a new sentence.
+ */
 export function titleCase(text) {
   let first = true;
   return String(text ?? '').split(/(\s+)/).map((part) => {
     if (!part.trim()) return part;
     const isFirst = first;
-    first = false;
-    // Bold markers (**) in front of a word are kept as they are; the word after them is cased.
+    first = /[.!?]$/.test(part.trim());
+    // Bold, italic and strike markers in front of a word are kept as they are; the word after them is cased.
     const lead = part.match(/^[*_~]*/)[0];
     const word = part.slice(lead.length);
+    if (/[@\/:]|\.[a-z]/i.test(word)) return part;                 // emails, links, domains
+    if (/[A-Z]/.test(word.slice(1))) return part;                   // iPhone, eBay: capitals already chosen
+    if (word.length > 1 && word === word.toUpperCase()) return part; // USA, HR: acronyms
     if (!isFirst && SMALL_WORDS.has(word.toLowerCase())) return lead + word.toLowerCase();
     return lead + word.charAt(0).toUpperCase() + word.slice(1);
   }).join('');
@@ -297,15 +319,22 @@ const WHOLE_UNITS = new Set(['', 'min', 'pomodoros', 'pages', 'steps', 'glasses'
  * whole things round up, so the total is always reached; other units keep two decimals.
  * e.g. 30 over 10 days, per day, is 3. Returns null when the total or the days are not valid.
  */
-export function perPeriodAmount(total, days, per, unit = '') {
+export function perPeriodAmount(total, days, per, unit = '', start = null) {
   const t = Number(String(total ?? '').trim());
   const n = Math.floor(Number(days));
   if (!Number.isFinite(t) || t <= 0 || !Number.isFinite(n) || n < 1) return null;
-  const periods = n / (PERIOD_DAYS[per] || 1);
+  const periods = CALENDAR_PERIODS[per]
+    ? (start ? countCalendarDays(per, start, n) : (n * CALENDAR_PERIODS[per].length) / 7)
+    : n / (PERIOD_DAYS[per] || 1);
   const raw = t / periods;
   if (WHOLE_UNITS.has(String(unit ?? '').trim().toLowerCase())) return Math.ceil(+raw.toFixed(6));
-  return Math.round(raw * 100) / 100;
+  return Math.round(raw * 1e6) / 1e6;   // keep precision so the total still adds up to what was typed
 }
+
+// Amounts are shown with two decimals, so a typed 3.33 must count as meeting a target of 3.3333.
+const AMOUNT_SLACK = 0.005;
+/** True when a logged value reaches a target, allowing for the rounding shown on screen. */
+export const metAmount = (value, target, days = 1) => Number(value) >= target - AMOUNT_SLACK * days;
 
 /** Why and description are optional, both when creating and editing a journey: blank stays blank. */
 export function optionalText(value, max) {
@@ -328,7 +357,7 @@ export function sortByOrder(goals) {
 
 export function newGoalData({
   type, title, description, why, days, endDate, smart, icon, color, startDate, order = null,
-  redoOf = null, now = new Date(),
+  redoOf = null, nextMorning = null, descMarkdown = false, now = new Date(),
 }) {
   if (!TYPES.includes(type)) throw new Error('Unknown type.');
   // Everything is optional when creating. A blank title is named after the type.
@@ -375,6 +404,9 @@ export function newGoalData({
     logs: {},               // SMART: { "YYYY-MM-DD": { [planIndex]: number } }. Weekly items use the week's first day.
     history: [],            // archived attempts: failed / abandoned / expired (never deleted)
     redoOf,                 // id of the accomplished journey this one repeats, or null
+    // Checked in the next day: each day is recorded the morning after it. Without a choice, the name decides.
+    nextMorning: nextMorning ?? isNextMorning({ title: clean }),
+    descMarkdown: type === 'smart' && !!descMarkdown,   // SMART goals only: the description is shown as Markdown
     order,
     createdAt: iso,
     updatedAt: iso,
@@ -414,6 +446,8 @@ export function redoData(goal, { startDate, days, endDate, why, description, ord
     startDate,
     order,
     redoOf: goal.id,
+    nextMorning: isNextMorning(goal),
+    descMarkdown: !!goal.descMarkdown,
     now,
   });
 }
@@ -424,8 +458,9 @@ export function cleanSankalpaDays(goal, value) {
   if (!Number.isFinite(n) || n < SANKALPA_MIN_DAYS || n > SANKALPA_MAX_DAYS) {
     throw new Error(`Sankalpa length must be between ${SANKALPA_MIN_DAYS} and ${SANKALPA_MAX_DAYS} days.`);
   }
+  // Equal to the days done would finish it with nothing left to check in, so it must stay above them.
   const done = doneCount(goal);
-  if (n < done) throw new Error(`The length cannot be less than the ${done} days already done.`);
+  if (n <= done) throw new Error(`The length must be more than the ${done} days already done.`);
   return n;
 }
 
@@ -505,19 +540,50 @@ export function journey(goal, today) {
 // The end date is not fixed: it follows the pace so far, so it stretches when progress is slow
 // and shortens when progress is fast.
 
+/** True when every plan item has a number entered for the date (zeros count). A plan with no items is never complete. */
+export function entriesComplete(goal, items, date) {
+  return items.length > 0 && items.every((it) => goal.logs?.[date]?.[it.index] !== undefined);
+}
+
 export function smartPhase(goal, today = todayStr()) {
   return today < goal.attemptStart ? 'upcoming' : 'running';
 }
 
 // Total to reach over the planned length. A "per week" item counts whole weeks.
 function itemTotal(goal, p) {
+  if (CALENDAR_PERIODS[p.per]) return p.amount * countCalendarDays(p.per, goal.attemptStart, goal.targetDays);
   const period = PERIOD_DAYS[p.per] || 1;
   return period === 1 ? p.amount * goal.targetDays : Math.ceil((p.amount * goal.targetDays) / period);
 }
 
-// What one day needs for this item.
-function dayTargetOf(p) {
+/** Whether a weekday or weekend item counts on this date. Other periods count every day. */
+export function countsOn(per, date) {
+  const days = CALENDAR_PERIODS[per];
+  return days ? days.includes(parseDate(date).getUTCDay()) : true;
+}
+
+/** How many days from start, over n days, a weekday or weekend item counts. */
+export function countCalendarDays(per, start, n) {
+  let count = 0;
+  for (let i = 0; i < n; i++) if (countsOn(per, addDays(start, i))) count++;
+  return count;
+}
+
+// What one day needs for this item. On a given date, a weekday or weekend item needs nothing on the other days.
+export function dayTargetOf(p, date = null) {
+  if (date && !countsOn(p.per, date)) return 0;
   return p.amount / (PERIOD_DAYS[p.per] || 1);
+}
+
+/**
+ * How much of a day's targets were reached, 0 to 100, averaged over the items due that day
+ * (each item counts at most its full daily amount). Null when no item is due that day.
+ */
+function dayPercent(items, logs, date) {
+  const due = items.filter((it) => dayTargetOf(it, date) > 0);
+  if (!due.length) return null;
+  const sum = due.reduce((s, it) => s + Math.min(1, Number(logs[date]?.[it.index] ?? 0) / dayTargetOf(it, date)), 0);
+  return Math.floor((sum / due.length) * 100);
 }
 
 /**
@@ -538,8 +604,10 @@ export function smartProgress(goal, today = todayStr()) {
     const p = { ...raw, ...planUnit(raw) };
     const index = Number.isFinite(p.key) ? p.key : pos;
     const total = itemTotal(goal, p);
+    // Only numbers logged inside the goal's own dates count (not before its start, not after today).
     let done = 0;
-    for (const vals of Object.values(logs)) {
+    for (const [date, vals] of Object.entries(logs)) {
+      if (date < start || date > today) continue;
       const v = Number(vals?.[index]);
       if (Number.isFinite(v)) done += v;
     }
@@ -553,13 +621,13 @@ export function smartProgress(goal, today = todayStr()) {
       dayTarget: dayTargetOf(p),
       pace: elapsed ? done / elapsed : 0,         // units per day so far
       ratio: total ? Math.min(1, done / total) : 0,
-      complete: done >= total,
+      complete: metAmount(done, total, plannedDays),
     };
   });
   const complete = items.length > 0 && items.every((it) => it.complete);
 
   const valueOn = (date, index) => Number(logs[date]?.[index] ?? 0);
-  const dayMet = (date) => items.length > 0 && items.every((it) => valueOn(date, it.index) >= it.dayTarget);
+  const dayMet = (date) => items.length > 0 && items.every((it) => metAmount(valueOn(date, it.index), dayTargetOf(it, date)));
 
   // Projection: the slowest item sets the finish. No progress yet means the planned rate.
   let projectedRemaining = 0;
@@ -569,26 +637,32 @@ export function smartProgress(goal, today = todayStr()) {
       const rate = it.pace > 0 ? it.pace : it.total / plannedDays;   // no progress yet: the planned average
       projectedRemaining = Math.max(projectedRemaining, Math.ceil(it.remaining / rate - 1e-9));
     }
+    // A very slow pace would push the finish centuries away and build an enormous day map. Cap it.
+    projectedRemaining = Math.min(projectedRemaining, MAX_PROJECTED_DAYS);
   }
   const projectedEnd = phase === 'upcoming' || complete || projectedRemaining === 0
     ? plannedEnd
     : addDays(today, projectedRemaining - 1);
   const projectedDays = diffDays(start, projectedEnd) + 1;
 
-  // Day map, from the first day to the projected end.
+  // Day map, from the first day to the projected end. Only the current day can still be logged.
+  // Earlier days are closed: met is done, anything logged is partial, and nothing logged is missed.
   let openDay = null;
   const days = [];
   for (let i = 0; i < projectedDays; i++) {
     const date = addDays(start, i);
-    const met = date <= day ? dayMet(date) : false;
     let state;
+    let percent = null;
     if (date > day) state = 'locked';
-    else if (met) state = 'done';
-    else if (openDay === null) {
+    else if (dayMet(date)) state = 'done';
+    else if (date < day) {
+      percent = dayPercent(items, logs, date) ?? 0;
+      state = percent > 0 ? 'partial' : 'missed';
+    } else {
       state = 'active';
       openDay = date;
-    } else state = 'queued';
-    days.push({ index: i, date, state });
+    }
+    days.push({ index: i, date, state, percent });
   }
 
   let zeroDays = 0;
@@ -626,6 +700,70 @@ export function smartProgress(goal, today = todayStr()) {
 }
 
 /**
+ * The daily brief for a SMART goal: pace, how far the finish moves, what to focus on, what is going well,
+ * what today still needs, and a few insights. Built only from smartProgress, so it matches the numbers on the page.
+ */
+export function smartBrief(goal, today = todayStr()) {
+  const p = smartProgress(goal, today);
+  const empty = { status: 'on-pace', shift: 0, focus: [], strengths: [], today: [], insights: [] };
+  if (p.phase === 'upcoming') return { ...empty, status: 'upcoming' };
+  if (p.complete) return { ...empty, status: 'complete' };
+
+  const start = goal.attemptStart;
+  const day = checkinDay(goal, today);   // the check-in day: what should be done by now
+  const round1 = (n) => Math.round(n * 10) / 10;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  const items = p.items.map((it) => {
+    // What this item should have reached by the check-in day, from its daily amounts.
+    let expected = 0;
+    for (let d = start; d <= day; d = addDays(d, 1)) expected += dayTargetOf(it, d);
+    const gap = round1(it.done - expected);
+    const perDay = p.planned.days ? it.total / p.planned.days : 0;   // average amount per day over the plan
+    const todayNeed = dayTargetOf(it, day);
+    const todayDone = Number(goal.logs?.[day]?.[it.index] ?? 0);
+    return {
+      action: it.action,
+      unit: it.unit || '',
+      done: it.done,
+      total: it.total,
+      expected: round1(expected),
+      gap,
+      ratio: it.ratio,
+      complete: it.complete,
+      catchUp: gap < 0 && perDay > 0 ? Math.ceil(-gap / perDay - 1e-9) : 0,   // days' worth of work behind
+      todayShort: Math.max(0, round1(todayNeed - todayDone)),
+    };
+  });
+
+  const status = p.verdict === 'extended' ? 'behind' : p.verdict === 'ahead' ? 'ahead' : 'on-pace';
+  const shift = p.projected.days - p.planned.days;   // more than 0: the finish moves later
+
+  const focus = items.filter((i) => !i.complete && i.gap < 0).sort((a, b) => a.gap - b.gap).slice(0, 2);
+  const strengths = items.filter((i) => i.gap >= 0 && i.done > 0).sort((a, b) => b.ratio - a.ratio).slice(0, 2);
+  const dueToday = items.filter((i) => i.todayShort > 0);
+
+  const insights = [];
+  const elapsed = day >= start ? diffDays(start, day) + 1 : 0;
+  if (elapsed > 0) {
+    const met = p.days.filter((d) => d.state === 'done').length;
+    insights.push(`${met} of ${elapsed} days met`);
+  }
+  if (p.zeroDays) insights.push(`${plural(p.zeroDays, 'zero day')}`);
+  if (!p.loggedDays) insights.push('Log today to start');
+  if (status === 'ahead') insights.push('Keep these amounts');
+
+  return {
+    status,
+    shift,
+    focus,
+    strengths,
+    today: dueToday,
+    insights,
+  };
+}
+
+/**
  * Saves numbers for a SMART goal. entries: [{ index, date, value }] for any day from the start up to today.
  * Logging the last target marks the goal accomplished.
  */
@@ -645,7 +783,8 @@ export function applySmartLog(goal, entries, now = new Date()) {
       throw new Error(`Enter a number of zero or more for "${item.action}".`);
     }
     const date = String(e.date || '');
-    if (date < goal.attemptStart || date > checkinDay(goal, today)) throw new Error('That day is not open for logging yet.');
+    if (date > checkinDay(goal, today)) throw new Error('That day is not open for logging yet.');
+    if (date < checkinDay(goal, today) || date < goal.attemptStart) throw new Error('That day is closed. Only the current day can be logged.');
     logs[date] = { ...(logs[date] || {}), [e.index]: v };
   }
 
@@ -706,7 +845,8 @@ export function applyCheckin(goal, date, answer, now = new Date()) {
     patch: {
       history: [...(goal.history || []), archiveAttempt(goal, { outcome: 'failed', reason, endDate: date })],
       attempt: goal.attempt + 1,
-      attemptStart: addDays(date, 1),
+      // The new attempt starts the day after the miss, or today if that day has already passed.
+      attemptStart: addDays(date, 1) > today ? addDays(date, 1) : today,
       checkins: {},
       updatedAt: iso,
     },
@@ -748,18 +888,28 @@ export function applyAbandon(goal, now = new Date()) {
   };
 }
 
+/** Deleting keeps the journey and its history: it moves to the Deleted tab, and can be redone from there. */
+export function applyDelete(goal, now = new Date()) {
+  if (goal.status === 'deleted') throw new Error('This journey is already deleted.');
+  if (goal.status === 'completed') throw new Error('Accomplished journeys cannot be deleted. They stay under Accomplished.');
+  const iso = now.toISOString();
+  return { status: 'deleted', deletedAt: iso, updatedAt: iso };
+}
+
 // ---------- read helpers used by the UI ----------
 
 /** Human text for the "today" line of a goal. */
 export function nextActionText(goal, today) {
   if (goal.status === 'completed') return { kind: 'completed', text: 'Accomplished' };
   if (goal.status === 'abandoned') return { kind: 'closed', text: 'Closed' };
+  if (goal.status === 'deleted') return { kind: 'closed', text: 'Deleted' };
   const day = checkinDay(goal, today);
   const yesterday = day !== today;   // next-morning journeys: today's entry is for yesterday
   if (goal.type === 'smart') {
     if (smartPhase(goal, today) === 'upcoming') return { kind: 'wait', text: `Starts ${goal.attemptStart}` };
     const p = smartProgress(goal, today);
     if (p.complete) return { kind: 'completed', text: 'Accomplished' };
+    if (!p.items.length) return { kind: 'wait', text: 'Add a plan to start logging' };
     if (!p.openDay) return { kind: 'wait', text: 'Next day unlocks tomorrow' };
     if (p.openDay === day) return { kind: 'today', text: yesterday ? 'Log yesterday' : 'Log today' };
     return { kind: 'overdue', text: `Pending since ${p.openDay}` };
@@ -831,9 +981,9 @@ export function checkinSummary(goals, today = todayStr()) {
     if (g.type === 'smart' && g.smart) {
       const p = smartProgress(g, today);
       const logs = g.logs || {};
-      const entered = (date) => p.items.length > 0 && p.items.every((it) => logs[date]?.[it.index] !== undefined);
+      const entered = (date) => entriesComplete(g, p.items, date);
       if (entered(day)) filled++;
-      if (p.phase === 'running' && !p.complete && p.openDay && !(p.openDay === day && entered(day))) {
+      if (p.phase === 'running' && !p.complete && p.items.length && p.openDay && !(p.openDay === day && entered(day))) {
         open++;
         needed += p.items.filter((it) => logs[p.openDay]?.[it.index] === undefined).length;
       }
@@ -849,15 +999,54 @@ export function checkinSummary(goals, today = todayStr()) {
   return { total: active.length, open, needed, filled };
 }
 
+/** The day a journey next needs a check-in: its first day not yet done, or null when nothing is left. */
+export function nextDueDate(goal, today = todayStr()) {
+  if (goal.type === 'smart' && goal.smart) {
+    const p = smartProgress(goal, today);
+    if (p.complete || !p.items.length) return null;
+    // A SMART day is checked in once every plan item has a number for it (zeros count).
+    // A partly entered day stays due until the rest is entered.
+    const day = checkinDay(goal, today);
+    const open = p.days.find((d) => d.date >= day && !entriesComplete(goal, p.items, d.date));
+    return open ? open.date : null;
+  }
+  const cell = journey(goal, today).cells.find((c) => c.state !== 'done' && c.state !== 'exception');
+  return cell ? cell.date : null;
+}
+
+/** True when a journey's check-in is for an earlier day and is still open. */
+export function isOverdue(goal, today = todayStr()) {
+  const due = nextDueDate(goal, today);
+  return !!due && due < checkinDay(goal, today);
+}
+
+/**
+ * What the Check In screen counts, one journey in one place:
+ * today: check-in due today and not yet done. overdue: an earlier day still open.
+ * tomorrow: next check-in is tomorrow, including journeys already done today.
+ */
+export function checkinCounts(goals, today = todayStr()) {
+  const active = goals.filter((g) => g.status === 'active');
+  const count = (group) => active.filter((g) => inCheckinGroup(g, group, today)).length;
+  return { today: count('today'), overdue: count('overdue'), tomorrow: count('tomorrow') };
+}
+
+/** Whether an active journey belongs to one of the Check In groups: 'today', 'overdue' or 'tomorrow'. */
+export function inCheckinGroup(goal, group, today = todayStr()) {
+  if (group === 'overdue') return isOverdue(goal, today);
+  const due = nextDueDate(goal, today);
+  if (!due) return false;
+  if (group === 'today') return due === checkinDay(goal, today);
+  if (group === 'tomorrow') return due === checkinDay(goal, addDays(today, 1));
+  return false;
+}
+
 /** True while a journey is waiting for a check-in: a day is due and not yet entered for today. */
 export function needsCheckin(goal, today = todayStr()) {
   if (goal.status !== 'active') return false;
   if (goal.type === 'smart' && goal.smart) {
-    const p = smartProgress(goal, today);
-    const logs = goal.logs || {};
-    const day = checkinDay(goal, today);
-    const enteredDay = p.items.length > 0 && p.items.every((it) => logs[day]?.[it.index] !== undefined);
-    return p.phase === 'running' && !p.complete && !!p.openDay && !(p.openDay === day && enteredDay);
+    const due = nextDueDate(goal, today);
+    return !!due && due <= checkinDay(goal, today);
   }
   const kind = nextActionText(goal, today).kind;
   return kind === 'today' || kind === 'overdue';
@@ -897,14 +1086,15 @@ function groupRows(rows, keyOf) {
 }
 
 /**
- * Accomplished journeys, one group per journey (same type and title). A sankalpa accomplished
- * HABIT_STREAK or more times in a row, each redo starting the day after the last one ended, is listed as a habit.
+ * Accomplished journeys, one group per journey (same type and title). Sankalpas accomplished one after another,
+ * each redo starting the day after the last one ended with no gap, become a habit once their days add up to HABIT_DAYS (66) or more.
  */
 export function accomplishedGroups(goals) {
   const rows = accomplished(goals).map((g) => ({
     goalId: g.id,
     title: g.title,
     type: g.type,
+    days: g.targetDays || 0,
     start: g.attemptStart || '',
     end: g.type === 'sankalpa' ? accomplishedDay(g) : String(g.completedAt || '').slice(0, 10),
     when: g.completedAt || '',
@@ -919,8 +1109,10 @@ export function accomplishedGroups(goals) {
   for (const list of sankalpasByTitle.values()) {
     list.sort((a, b) => a.start.localeCompare(b.start));
     let run = [];
+    // A run is a block of accomplishments with no gap day. Its days add up; 66 or more makes it a habit.
     const closeRun = () => {
-      if (run.length >= HABIT_STREAK) run.forEach((r) => { r.type = 'habit'; });
+      const total = run.reduce((sum, r) => sum + r.days, 0);
+      if (run.length && total >= HABIT_DAYS) run.forEach((r) => { r.type = 'habit'; });
       run = [];
     };
     for (const r of list) {
@@ -938,4 +1130,12 @@ export function accomplishedGroups(goals) {
 export function notAccomplishedGroups(goals, today = todayStr()) {
   const rows = notAccomplished(goals, today).map((m) => ({ ...m, when: m.endDate || '' }));
   return groupRows(rows, (r) => `${r.type}|${titleKey(r.title)}|${r.outcome}`);
+}
+
+/** Deleted journeys, one group per type and title, so repeated deletes show how many times. */
+export function deletedGroups(goals) {
+  const rows = goals
+    .filter((g) => g.status === 'deleted')
+    .map((g) => ({ goalId: g.id, title: g.title, type: g.type, when: String(g.deletedAt || '').slice(0, 10) }));
+  return groupRows(rows, (r) => `${r.type}|${titleKey(r.title)}`);
 }

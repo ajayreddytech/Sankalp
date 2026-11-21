@@ -1,19 +1,31 @@
 rules_version = '2';
 
-// SANKALP security rules. Each signed-in user can read and write only their own data.
+// SANKALP security rules. Each signed-in user can read and write only their own data,
+// and every journey must have the shape the app writes.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function validJourney() {
+      let d = request.resource.data;
+      return d.schemaVersion == 1
+        && d.type in ['habit', 'sankalpa', 'smart']
+        && d.status in ['active', 'completed', 'abandoned', 'deleted']
+        && d.title is string && d.title.size() <= 80
+        && d.targetDays is int && d.targetDays >= 1 && d.targetDays <= 365
+        && d.attempt is int && d.attempt >= 1;
+    }
+
     match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if isOwner(uid);
 
       match /goals/{goalId} {
-        allow read: if request.auth != null && request.auth.uid == uid;
-        // Writes must keep a valid schema version. The owner may delete their own journeys.
-        allow create, update: if request.auth != null && request.auth.uid == uid
-          && request.resource.data.schemaVersion == 1
-          && request.resource.data.title is string
-          && request.resource.data.title.size() <= 80;
-        allow delete: if request.auth != null && request.auth.uid == uid;
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validJourney();
+        allow delete: if isOwner(uid);
       }
     }
 

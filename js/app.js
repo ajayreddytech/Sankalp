@@ -2,16 +2,18 @@
 import * as db from './db.js';
 import * as L from './logic.js';
 import { ICON_GROUPS, COLOURS, DEFAULT_COLOUR } from './choices.js';
+import { renderMarkdown } from './markdown.js';
 
 // What each kind of journey means, shown under its column so the three are easy to tell apart.
-const TYPE_PLURAL = { habit: 'Habits', sankalpa: 'Sankalpas', smart: 'SMART goals' };
+const TYPE_PLURAL = { habit: 'Habits', sankalpa: 'Sankalpas', smart: 'SMART Goals' };
 const TYPE_ICON = { habit: 'repeat', sankalpa: 'scroll', smart: 'target' };
 const TYPE_SUB = {
   habit: '66 days in a row. Two exception days allowed.',
   sankalpa: 'A vow for the number of days you choose. No exceptions.',
   smart: 'A plan of measurable actions, logged each day toward a deadline.',
 };
-const OUTCOME_LABEL = { failed: 'Not kept', abandoned: 'Abandoned' };
+// A journey colour must be a six-digit hex value. Anything else falls back to the default, so nothing odd reaches the page.
+const colour = (c) => (/^#[0-9a-f]{6}$/i.test(String(c)) ? c : '#14B8A6');
 
 const state = {
   authReady: false,
@@ -19,13 +21,13 @@ const state = {
   goals: [],
   goalsReady: false,
   accTab: 'accomplished',
+  checkView: null,   // Check In: 'today' | 'overdue' | 'tomorrow' when one group is open, null for the default list
   lastRouteKey: null,
   reorder: false,
   dragging: false,
   renderPending: false,
   drafts: {},        // unsaved SMART numbers, keyed "goalId|planIndex|date", kept across re-renders
   loginError: '',
-  pickDay: {},       // which finished day a SMART goal's log is showing, by goal id
   openType: null,    // which type column (habit, sankalpa, smart) is open on Check In or Your Journeys
 };
 let unsubscribeGoals = null;
@@ -62,8 +64,8 @@ function startKpiHTML(g, today) {
 
 // Whole numbers stay whole; decimals show one place (1.5, 0.3).
 const fmtNum = (n) => {
-  const v = Number(n) || 0;
-  return Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10);
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  return String(v);
 };
 
 const typeName = (g) => L.TYPE_LABEL[g.type] || 'Habit';
@@ -90,6 +92,10 @@ function toast(msg, kind = 'info') {
 const fit = (ta) => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; };
 const fitAll = (root) => root.querySelectorAll('textarea[data-rich]').forEach(fit);
 
+// Every field's value in a dialog's form, as one string. Used to tell whether anything was typed.
+const formSnapshot = (root) => [...new FormData(root.querySelector('form')).entries()]
+  .map(([k, v]) => `${k}=${v}`).join('\n');
+
 function openModal({ title, body, footer = '', wide = false, onMount, onClose }) {
   const wrap = document.createElement('div');
   wrap.className = 'modal-backdrop';
@@ -106,7 +112,9 @@ function openModal({ title, body, footer = '', wide = false, onMount, onClose })
   refreshIcons();
 
   let closed = false;
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  let baseline = null;     // the form as it was opened; set once the dialog is built
+  let asking = false;      // a "discard?" question is open
+  const onKey = (e) => { if (e.key === 'Escape') requestClose(); };
   const onResize = () => fitAll(wrap);
   function close() {
     if (closed) return;
@@ -116,6 +124,23 @@ function openModal({ title, body, footer = '', wide = false, onMount, onClose })
     wrap.classList.add('leaving');
     setTimeout(() => wrap.remove(), 200);
     onClose?.();
+  }
+  // Closing a form with typed changes asks first, so nothing is lost by a stray tap or Escape.
+  async function requestClose() {
+    if (closed || asking) return;
+    const dirty = baseline !== null && formSnapshot(wrap) !== baseline;
+    if (dirty) {
+      asking = true;
+      const discard = await confirmDialog({
+        title: 'Discard your changes?',
+        message: 'What you typed here has not been saved.',
+        confirmLabel: 'Discard',
+        danger: true,
+      });
+      asking = false;
+      if (!discard) return;
+    }
+    close();
   }
   document.addEventListener('keydown', onKey);
   window.addEventListener('resize', onResize);
@@ -128,13 +153,28 @@ function openModal({ title, body, footer = '', wide = false, onMount, onClose })
     if (pv?.classList.contains('rich-preview')) {
       pv.innerHTML = rich(ta.value);
       pv.hidden = !hasBold(ta.value);
+    } else if (pv?.classList.contains('rich-wrap')) {
+      pv.querySelector('.preview-body').innerHTML = rich(ta.value);
+      pv.hidden = !hasBold(ta.value);
     }
+    const mf = ta.closest('[data-md-field]');
+    if (mf) syncMarkdown(mf);
+  });
+  wrap.addEventListener('change', (e) => {
+    if (e.target.matches?.('[data-md-toggle]')) syncMarkdown(e.target.closest('[data-md-field]'));
   });
   fitAll(wrap);
   wrap.addEventListener('click', (e) => {
-    if (e.target === wrap || e.target.closest('[data-close]')) close();
+    if (e.target === wrap || e.target.closest('[data-close]')) requestClose();
+    const btn = e.target.closest('[data-preview-toggle]');
+    if (btn) {
+      const box = btn.closest('.preview-wrap');
+      box.classList.toggle('open');
+      btn.textContent = box.classList.contains('open') ? 'Show less' : 'Show full preview';
+    }
   });
   onMount?.(wrap, close);
+  if (wrap.querySelector('form')) baseline = formSnapshot(wrap);
   return { wrap, close };
 }
 
@@ -269,9 +309,9 @@ function colorDropdown(selected = DEFAULT_COLOUR) {
   const known = COLOURS.some((p) => p.hex.toUpperCase() === sel);
   const list = known ? COLOURS : [{ name: 'Current colour', hex: selected }, ...COLOURS];
   const current = list.find((p) => p.hex.toUpperCase() === sel) || list[0];
-  const face = (p) => `<span class="dd-face"><i class="dd-dot" style="--c:${p.hex}"></i><span class="dd-name">${esc(p.name)}</span></span>`;
+  const face = (p) => `<span class="dd-face"><i class="dd-dot" style="--c:${colour(p.hex)}"></i><span class="dd-name">${esc(p.name)}</span></span>`;
   const opts = list.map((p) => `
-    <button type="button" class="dd-opt colour${p.hex.toUpperCase() === sel ? ' on' : ''}" data-dd-option data-value="${p.hex}" title="${esc(p.name)}">${face(p)}</button>`).join('');
+    <button type="button" class="dd-opt colour${p.hex.toUpperCase() === sel ? ' on' : ''}" data-dd-option data-value="${esc(p.hex)}" title="${esc(p.name)}">${face(p)}</button>`).join('');
   return dropdown({ kind: 'colors', name: 'color', value: current.hex, valueHTML: face(current), optionsHTML: opts });
 }
 
@@ -524,7 +564,7 @@ function renderRail() {
   const cls = (name, id) => (r.name === name && (!id || r.id === id) ? 'rail-item active' : 'rail-item');
   const goalItems = active.map((g) => `
     <a class="${cls('goal', g.id)} goal-item rail-drag" data-id="${esc(g.id)}" href="#/goal/${encodeURIComponent(g.id)}"
-       data-tip="${esc(g.title)}" style="--c:${g.color}" aria-label="${esc(g.title)}">
+       data-tip="${esc(g.title)}" style="--c:${colour(g.color)}" aria-label="${esc(g.title)}">
       ${icon(g.icon)}
     </a>`).join('');
   // Keep the phone bar's scroll position: rebuilding the rail would otherwise jump it back to the start.
@@ -579,7 +619,7 @@ function goalInner(g, today) {
   if (g.type === 'smart' && g.smart) {
     const p = L.smartProgress(g, today);
     pct = Math.round(p.ratio * 100);
-    meta = `SMART goal · ${p.projected.days} days`;
+    meta = `SMART Goal · ${p.projected.days} days`;
     foot = `<span>${pct}% of targets</span>`;
   } else {
     const j = L.journey(g, today);
@@ -604,35 +644,33 @@ function goalInner(g, today) {
 
 function goalCard(g, today) {
   return `
-    <a class="goal-card" href="#/goal/${encodeURIComponent(g.id)}" style="--c:${g.color}">
+    <a class="goal-card" href="#/goal/${encodeURIComponent(g.id)}" style="--c:${colour(g.color)}">
       ${goalInner(g, today)}
     </a>`;
 }
 
 // A journey card you can drag in reorder mode. It sits in its type's column.
 function dragCardHTML(g, today) {
-  return `<div class="goal-card drag-item" data-id="${esc(g.id)}" style="--c:${g.color}">${goalInner(g, today)}</div>`;
+  return `<div class="goal-card drag-item" data-id="${esc(g.id)}" style="--c:${colour(g.color)}">${goalInner(g, today)}</div>`;
 }
 
 // SMART log for one day: one number box per plan item. Defaults to the open day.
-// A finished day can be picked from the day map and edited; the next day only opens once the open day is met.
-function smartLogHTML(g, today, pick = null) {
+// Only the check-in day can be logged. The next day only opens once the open day is met.
+function smartLogHTML(g, today) {
   const p = L.smartProgress(g, today);
   if (p.phase === 'upcoming') return `<p class="muted log-note">Starts ${fmtDate(g.attemptStart)}. You can log numbers from that day.</p>`;
   if (!p.items.length) return '<p class="muted log-note">This goal has no plan yet. Add one from Edit.</p>';
-  const usable = pick && pick >= g.attemptStart && pick <= today;
-  const date = usable ? pick : p.openDay;
-  if (!date) return '<p class="muted log-note">Today is complete. The next day unlocks tomorrow.</p>';
-  const isOpen = date === p.openDay;
-  const dayLabel = date === today ? 'Today' : `${isOpen ? 'Pending' : 'Day'} · ${fmtDate(date)}`;
+  // Only the current check-in day can be logged. Earlier days are closed.
+  const date = L.checkinDay(g, today);
+  const dayLabel = date === today ? 'Today' : `Pending · ${fmtDate(date)}`;
 
   const valueOf = (it) => state.drafts[`${g.id}|${it.index}|${date}`] ?? g.logs?.[date]?.[it.index];
   const needs = p.items.filter((it) => {
     const v = valueOf(it);
-    return v === undefined || v === '' || Number(v) < it.dayTarget;
+    return v === undefined || v === '' || !L.metAmount(v, L.dayTargetOf(it, date));
   });
   const needHTML = needs.length
-    ? `<p class="log-need">${icon('circle-alert')}<span>Still needed: ${needs.map((it) => `${esc(it.action)} (${fmtNum(it.dayTarget)})`).join(', ')}</span></p>`
+    ? `<p class="log-need">${icon('circle-alert')}<span>Still needed: ${needs.map((it) => `${esc(it.action)} (${fmtNum(L.dayTargetOf(it, date))})`).join(', ')}</span></p>`
     : `<p class="log-ok">${icon('circle-check')}<span>This day is met.</span></p>`;
 
   const rows = p.items.map((it) => {
@@ -657,24 +695,30 @@ function smartLogHTML(g, today, pick = null) {
 }
 
 // One row of the check-in screen: the controls when a day is due, otherwise a quiet line.
-function checkRowHTML(g, today) {
+function checkRowHTML(g, today, view = null) {
   const nxt = L.nextActionText(g, today);
+  const overdueTag = L.isOverdue(g, today) ? '<span class="overdue-tag">Overdue</span>' : '';
   const titleLink = (sub) => `
     <a class="due-title" href="#/goal/${encodeURIComponent(g.id)}">
       <span class="goal-icon sm">${icon(g.icon)}</span>
-      <span><strong>${esc(g.title)}</strong><small>${esc(sub)}</small></span>
+      <span><strong>${esc(g.title)}${overdueTag}</strong><small>${esc(sub)}</small></span>
     </a>`;
+
+  // The Tomorrow group is a preview: no buttons, because nothing is due yet.
+  if (view === 'tomorrow') {
+    return `<div class="due-row idle" style="--c:${colour(g.color)}">${titleLink('Due tomorrow')}</div>`;
+  }
 
   if (g.type === 'smart' && g.smart) {
     const p = L.smartProgress(g, today);
-    if (p.phase === 'running' && p.openDay && !p.complete) {
+    if (p.phase === 'running' && !p.complete && L.nextDueDate(g, today)) {
       return `
-        <div class="due-row smart-due" style="--c:${g.color}">
-          ${titleLink(`${nxt.text} · SMART goal`)}
+        <div class="due-row smart-due" style="--c:${colour(g.color)}">
+          ${titleLink(`${nxt.text} · SMART Goal`)}
           ${smartLogHTML(g, today)}
         </div>`;
     }
-    return `<div class="due-row idle" style="--c:${g.color}">${titleLink(nxt.text)}</div>`;
+    return `<div class="due-row idle" style="--c:${colour(g.color)}">${titleLink(nxt.text)}</div>`;
   }
 
   if (nxt.kind === 'today' || nxt.kind === 'overdue') {
@@ -682,7 +726,7 @@ function checkRowHTML(g, today) {
     const av = L.exceptionAvailability(g, j.next.date);
     const label = j.next.date === today ? 'Today' : `Pending · ${fmtDate(j.next.date)}`;
     return `
-      <div class="due-row" style="--c:${g.color}">
+      <div class="due-row" style="--c:${colour(g.color)}">
         ${titleLink(label)}
         <div class="due-actions">
           <button class="btn yes sm" data-action="checkin" data-goal="${g.id}" data-date="${j.next.date}" data-answer="yes">${icon('check')}Done</button>
@@ -690,7 +734,7 @@ function checkRowHTML(g, today) {
         </div>
       </div>`;
   }
-  return `<div class="due-row idle" style="--c:${g.color}">${titleLink(nxt.text)}</div>`;
+  return `<div class="due-row idle" style="--c:${colour(g.color)}">${titleLink(nxt.text)}</div>`;
 }
 
 function greeting() {
@@ -702,9 +746,17 @@ function greeting() {
 function viewHome() {
   const today = L.todayStr();
   const active = sortedActive();
-  const s = L.checkinSummary(state.goals, today);
+  const c = L.checkinCounts(state.goals, today);
   const name = (state.user.displayName || '').split(' ')[0] || 'There';
   const due = active.filter((g) => L.needsCheckin(g, today));
+  // A tapped number opens its own list. With none open, the list is everything due now.
+  const view = state.checkView;
+  const shown = view ? active.filter((g) => L.inCheckinGroup(g, view, today)) : due;
+  const emptyText = { today: 'Nothing due today.', overdue: 'Nothing overdue.', tomorrow: 'Nothing due tomorrow.' }[view] || 'Nothing to check in.';
+  const tile = (key, n, label, hot = false) => `
+    <button type="button" class="stat stat-btn${hot ? ' hot' : ''}${view === key ? ' on' : ''}" data-action="check-view" data-view="${key}" aria-pressed="${view === key}">
+      <div><strong>${n}</strong><span>${label}</span></div>
+    </button>`;
 
   const editBtn = active.length > 1 ? `
     <button class="icon-btn edit-btn reorder-toggle${state.reorder ? ' on' : ''}" data-action="reorder"
@@ -727,9 +779,9 @@ function viewHome() {
       </section>`;
   } else {
     body = `
-      ${!due.length ? `<div class="all-clear">${icon('circle-check')}<span>All caught up. Nothing needs a check-in right now.</span></div>` : ''}
+      ${!view && !due.length ? `<div class="all-clear">${icon('circle-check')}<span>All caught up. Nothing needs a check-in right now.</span></div>` : ''}
       <section class="block">
-        ${typeColumns(due, (g) => checkRowHTML(g, today), 'Nothing to check in.', { collapsible: true })}
+        ${typeColumns(shown, (g) => checkRowHTML(g, today, view), emptyText, { collapsible: !view })}
       </section>`;
   }
 
@@ -741,7 +793,9 @@ function viewHome() {
         ${active.length ? `
         <div class="checkin-bar">
           <div class="stats summary">
-            <div class="stat${s.needed ? ' hot' : ''}"><div><strong>${s.needed}</strong><span>To fill</span></div></div>
+            ${tile('today', c.today, 'Today', c.today > 0)}
+            ${c.overdue || view === 'overdue' ? tile('overdue', c.overdue, 'Overdue', true) : ''}
+            ${tile('tomorrow', c.tomorrow, 'Tomorrow')}
           </div>
           ${editBtn}
         </div>` : ''}
@@ -806,18 +860,20 @@ function cellHTML(c, g, today, av) {
 
 function goalHeadHTML(g) {
   return `
-    <header class="goal-head" style="--c:${g.color}">
+    <header class="goal-head" style="--c:${colour(g.color)}">
       <a class="icon-btn back" href="#/journeys" aria-label="Back">${icon('arrow-left')}</a>
       <div class="goal-title">
         <span class="goal-icon lg">${icon(g.icon)}</span>
         <div>
           <p class="eyebrow">${typeName(g)}</p>
           <h1>${esc(g.title)}</h1>
-          ${g.description ? `<p class="desc">${rich(g.description)}</p>` : ''}
+          ${g.description ? (g.type === 'smart' && g.descMarkdown
+            ? `<div class="desc md">${renderMarkdown(g.description)}</div>`
+            : `<p class="desc">${rich(g.description)}</p>`) : ''}
           ${g.why ? `<p class="why"><strong>Why:</strong> ${rich(g.why)}</p>` : ''}
         </div>
       </div>
-      <button class="icon-btn" data-action="goal-settings" data-goal="${g.id}" aria-label="Edit journey">${icon('pencil')}</button>
+      ${g.status === 'deleted' ? '' : `<button class="icon-btn" data-action="goal-settings" data-goal="${g.id}" aria-label="Edit journey">${icon('pencil')}</button>`}
     </header>`;
 }
 
@@ -849,6 +905,8 @@ function viewHabitGoal(g, today) {
       <button class="btn primary sm" data-action="redo" data-goal="${g.id}">${icon('rotate-ccw')}Redo</button></section>`;
   } else if (g.status === 'abandoned') {
     panel = `<section class="panel muted-panel">${icon('ban')}<div><h3>Closed</h3><p class="muted">This journey was abandoned and is listed under Not accomplished.</p></div></section>`;
+  } else if (g.status === 'deleted') {
+    panel = `<section class="panel muted-panel">${icon('trash-2')}<div><h3>Deleted</h3><p class="muted">This journey is listed under Deleted. You can redo it from there.</p></div></section>`;
   } else if (j.next) {
     const isToday = j.next.date === today;
     const consequence = nextExc.ok
@@ -870,6 +928,8 @@ function viewHabitGoal(g, today) {
           <button class="btn no" data-action="checkin" data-goal="${g.id}" data-date="${j.next.date}" data-answer="no">${icon('x')}Missed</button>
         </div>
       </section>`;
+  } else if (today < g.attemptStart) {
+    panel = `<section class="panel muted-panel">${icon('calendar')}<div><h3>Not started yet</h3><p class="muted">Starts ${fmtDate(g.attemptStart)}.</p></div></section>`;
   } else {
     panel = `<section class="panel muted-panel">${icon('circle-check')}<div><h3>Today is checked</h3><p class="muted">The next day unlocks tomorrow.</p></div></section>`;
   }
@@ -920,37 +980,75 @@ function viewHabitGoal(g, today) {
     </div>`;
 }
 
-// The pace insight: how many days are left at the current pace, and whether the goal is growing, shrinking or on pace.
-function paceNoteHTML(g, p) {
+// The daily brief: pace, how far the finish moves, what to focus on, what is going well, what today needs, insights.
+function paceNoteHTML(g, p, b) {
   if (p.complete) return '';
-  const n = p.planned.days;
+  if (b.status === 'upcoming') {
+    return `
+    <section class="panel pace-panel">
+      ${icon('calendar')}
+      <div>
+        <p class="pace-status">Not started</p>
+        <h3>Starts ${fmtDate(g.attemptStart)}</h3>
+      </div>
+    </section>`;
+  }
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const end = fmtDate(p.projected.end);
+  const planEnd = fmtDate(p.planned.end);
   const left = p.daysLeft;
-  const status = p.verdict === 'extended'
-    ? { cls: 'behind', word: 'Growing', icon: 'trending-up' }
-    : p.verdict === 'ahead'
-      ? { cls: 'ahead', word: 'Shrinking', icon: 'trending-down' }
+  const status = b.status === 'behind'
+    ? { cls: 'behind', word: 'Lagging', icon: 'trending-up' }
+    : b.status === 'ahead'
+      ? { cls: 'ahead', word: 'Ahead', icon: 'trending-down' }
       : { cls: '', word: 'On pace', icon: 'circle-check' };
-  const detail = p.verdict === 'extended'
-    ? `It was planned for ${n} days. You are behind, so the goal now runs ${p.projected.days} days, ending ${end}. Do a little more each day to bring it back.`
-    : p.verdict === 'ahead'
-      ? `It was planned for ${n} days. You are ahead, so the goal now runs ${p.projected.days} days, ending ${end}. Keep going and it gets shorter.`
-      : `It is planned for ${n} days, ending ${end}. Keep this pace to finish on time.`;
+  const headline = b.status === 'behind'
+    ? `${plural(b.shift, 'day')} late at this pace (${end}).`
+    : b.status === 'ahead'
+      ? `${plural(-b.shift, 'day')} early at this pace (${end}).`
+      : `On track for ${planEnd}.`;
+  const unitText = (it) => (it.unit ? ` ${esc(it.unit)}` : '');
+  const focusRows = b.focus.map((it) => `<strong>${rich(it.action)}</strong> ${fmtNum(it.done)} of ${fmtNum(it.expected)}${unitText(it)}${it.catchUp ? ` · ~${plural(it.catchUp, 'day')} behind` : ''}`);
+  const strongRows = b.strengths.map((it) => `<strong>${rich(it.action)}</strong> ${Math.round(it.ratio * 100)}%`);
+  const todayRows = b.today.map((it) => `<strong>${rich(it.action)}</strong> ${fmtNum(it.todayShort)}${unitText(it)} left`);
+  const list = (title, rows, emptyText) => `<div class="brief-col"><h4>${title}</h4>${rows.length
+    ? `<ul>${rows.map((r) => `<li>${r}</li>`).join('')}</ul>`
+    : `<p class="muted">${emptyText}</p>`}</div>`;
   return `
     <section class="panel pace-panel ${status.cls}">
       ${icon(status.icon)}
       <div>
         <p class="pace-status">${status.word}</p>
         <h3>${left} day${left === 1 ? '' : 's'} left at your current pace</h3>
-        <p>${detail}</p>
+        <p>${headline}</p>
+        <div class="brief-grid">
+          ${list('Focus', focusRows, 'All on track')}
+          ${list('Doing well', strongRows, 'Log to see')}
+          ${list('Today', todayRows, 'All done')}
+          ${list('Insights', [
+            ...(b.shift ? [b.shift > 0
+              ? `Planned ${planEnd}, extended to ${end} for your pace`
+              : `Planned ${planEnd}, now ${end} for your pace`] : []),
+            ...b.insights,
+          ], 'Log to see')}
+        </div>
       </div>
     </section>`;
+}
+
+// What a day cell shows: a tick when done, the percentage when partial, a cross when missed, otherwise its day number.
+function cellContent(d) {
+  if (d.state === 'done') return icon('check');
+  if (d.state === 'missed') return icon('x');
+  if (d.state === 'partial') {
+    return `<span class="tide"><span class="wave"></span></span><span class="num">${d.percent}%</span>`;
+  }
+  return `<span class="num">${d.index + 1}</span>`;
 }
 
 function viewSmartGoal(g, today) {
   const p = L.smartProgress(g, today);
   const pct = Math.round(p.ratio * 100);
-  const pick = state.pickDay[g.id] || null;
 
   let panel = '';
   if (g.status === 'completed') {
@@ -960,24 +1058,22 @@ function viewSmartGoal(g, today) {
       <button class="btn primary sm" data-action="redo" data-goal="${g.id}">${icon('rotate-ccw')}Redo</button></section>`;
   } else if (g.status === 'abandoned') {
     panel = `<section class="panel muted-panel">${icon('ban')}<div><h3>Closed</h3><p class="muted">This goal was closed and is listed under Not accomplished.</p></div></section>`;
+  } else if (g.status === 'deleted') {
+    panel = `<section class="panel muted-panel">${icon('trash-2')}<div><h3>Deleted</h3><p class="muted">This goal is listed under Deleted. You can redo it from there.</p></div></section>`;
   } else {
-    panel = paceNoteHTML(g, p);
+    panel = paceNoteHTML(g, p, L.smartBrief(g, today));
   }
 
   const logBlock = g.status === 'active' ? `
     <section class="block">
       <div class="block-head"><h2>Log your numbers</h2></div>
-      <div class="smart-due">${smartLogHTML(g, today, pick)}</div>
+      <div class="smart-due">${smartLogHTML(g, today)}</div>
     </section>` : '';
 
-  // Every day from the first to the projected end. Done, open and past days can be picked to edit.
+  // Every day from the first to the projected end. Days are closed once they pass, so the map is read-only.
   const cells = p.days.map((d) => {
-    const clickable = d.date <= today && d.state !== 'locked';
-    const tag = clickable ? 'button' : 'div';
-    const attrs = clickable
-      ? ` type="button" data-action="day-pick" data-goal="${esc(g.id)}" data-date="${d.date}"`
-      : '';
-    return `<${tag} class="cell s-${d.state}${pick === d.date ? ' picked' : ''}" style="--i:${Math.min(d.index, 40)}" title="Day ${d.index + 1} · ${fmtDate(d.date)}"${attrs}>${d.state === 'done' ? icon('check') : `<span class="num">${d.index + 1}</span>`}</${tag}>`;
+    const partial = d.state === 'partial' ? `Only ${d.percent}% of goal met for the day` : '';
+    return `<div class="cell s-${d.state}" style="--i:${Math.min(d.index, 40)};--pct:${d.percent ?? 0}" title="Day ${d.index + 1} · ${fmtDate(d.date)}${partial ? ` · ${partial}` : ''}"${partial ? ` aria-label="${partial}"` : ''}>${cellContent(d)}</div>`;
   }).join('');
 
   const targets = p.items.length
@@ -1007,10 +1103,10 @@ function viewSmartGoal(g, today) {
           <h2>Day by day</h2>
           <div class="legend">
             <span><i class="dot d"></i>Done</span><span><i class="dot a"></i>Open</span>
-            <span><i class="dot q"></i>Waiting</span><span><i class="dot l"></i>Locked</span>
+            <span><i class="dot p"></i>Partial</span><span><i class="dot m"></i>Missed</span><span><i class="dot l"></i>Locked</span>
           </div>
         </div>
-        <p class="muted hint">A day is done when every item reaches its daily amount. Tap a finished day to edit it.</p>
+        <p class="muted hint">Today stays open until midnight, then the day closes: done, partial by its percentage, or missed.</p>
         <div class="journey">${cells}</div>
       </section>
 
@@ -1090,13 +1186,16 @@ function viewAccomplishments() {
   const tab = state.accTab;
   const done = L.accomplishedGroups(state.goals);
   const misses = L.notAccomplishedGroups(state.goals, L.todayStr());
+  const deleted = L.deletedGroups(state.goals);
   const doneTotal = done.reduce((n, g) => n + g.count, 0);
   const missTotal = misses.reduce((n, g) => n + g.count, 0);
+  const deletedTotal = deleted.reduce((n, g) => n + g.count, 0);
   const countLabel = (text, n) => (n > 1 ? `${text} × ${n}` : text);
   const tabs = `
     <div class="segmented" role="tablist">
       <button role="tab" aria-selected="${tab === 'accomplished'}" class="${tab === 'accomplished' ? 'on' : ''}" data-action="acc-tab" data-tab="accomplished">${icon('trophy')}Accomplished <b>${doneTotal}</b></button>
       <button role="tab" aria-selected="${tab === 'missed'}" class="${tab === 'missed' ? 'on' : ''}" data-action="acc-tab" data-tab="missed">${icon('circle-x')}Not accomplished <b>${missTotal}</b></button>
+      <button role="tab" aria-selected="${tab === 'deleted'}" class="${tab === 'deleted' ? 'on' : ''}" data-action="acc-tab" data-tab="deleted">${icon('trash-2')}Deleted <b>${deletedTotal}</b></button>
     </div>`;
 
   const record = (title, status, tone, goalId, redoAction) => `
@@ -1111,6 +1210,8 @@ function viewAccomplishments() {
   let list;
   if (tab === 'accomplished') {
     list = typeColumns(done, (g) => record(g.title, countLabel('Accomplished', g.count), 'ok', g.latest.goalId, 'redo'), 'Nothing accomplished in this group yet.');
+  } else if (tab === 'deleted') {
+    list = typeColumns(deleted, (d) => record(d.title, countLabel('Deleted', d.count), 'deleted', d.latest.goalId, 'redo-miss'), 'Nothing deleted in this group.');
   } else {
     list = typeColumns(misses, (m) => (m.latest.outcome === 'abandoned'
       ? record(m.title, countLabel('Abandoned', m.count), 'abandoned', m.latest.goalId, 'redo-miss')
@@ -1118,6 +1219,14 @@ function viewAccomplishments() {
   }
 
   const empty = !done.length && !misses.length;
+  let body = list;
+  if (tab === 'deleted') {
+    if (!deleted.length) body = emptyBlock('trash-2', 'Nothing deleted', 'Journeys you delete land here, with their history, ready to redo.');
+  } else if (empty) {
+    body = tab === 'accomplished'
+      ? emptyBlock('trophy', 'Nothing accomplished yet', 'Complete a journey and it will land here.')
+      : emptyBlock('sparkles', 'No misses on record', 'Every journey you have started is still on track or accomplished.');
+  }
   return `
     <div class="page-in-target">
       <header class="hero">
@@ -1125,10 +1234,7 @@ function viewAccomplishments() {
         <h1 class="page-title">Accomplishments</h1>
       </header>
       ${tabs}
-      <section class="block">${empty && tab === 'accomplished'
-        ? emptyBlock('trophy', 'Nothing accomplished yet', 'Complete a journey and it will land here.')
-        : empty ? emptyBlock('sparkles', 'No misses on record', 'Every journey you have started is still on track or accomplished.')
-          : list}</section>
+      <section class="block">${body}</section>
     </div>`;
 }
 
@@ -1154,9 +1260,15 @@ function smartPlanHTML(g) {
 // A free-text box. Enter starts a new line and the box grows to fit. Typing **text** in it is shown bold in the preview under it.
 // True when the text has any formatting, so the live preview shows.
 const hasBold = (s) => rich(String(s ?? '')) !== esc(String(s ?? ''));
-function richBoxHTML({ name, value = '', max, req = false, placeholder = '', rows = 1, aria = '', cls = '' }) {
-  return `<textarea class="auto${cls ? ` ${cls}` : ''}" data-rich name="${name}" rows="${rows}" maxlength="${max}"${req ? ' required' : ''}${placeholder ? ` placeholder="${esc(placeholder)}"` : ''}${aria ? ` aria-label="${esc(aria)}"` : ''}>${esc(value)}</textarea>`
-    + `<span class="rich-preview" aria-hidden="true"${hasBold(value) ? '' : ' hidden'}>${rich(value)}</span>`;
+// A preview that shows about two lines, with a button to show all of it.
+function previewBodyHTML(html, hideButton = false) {
+  return `<button type="button" class="preview-toggle" data-preview-toggle${hideButton ? ' hidden' : ''}>Show full preview</button><div class="preview-body rich-preview">${html}</div>`;
+}
+
+function richBoxHTML({ name, value = '', max, req = false, placeholder = '', rows = 1, aria = '', cls = '', collapsible = false }) {
+  const box = `<textarea class="auto${cls ? ` ${cls}` : ''}" data-rich name="${name}" rows="${rows}" maxlength="${max}"${req ? ' required' : ''}${placeholder ? ` placeholder="${esc(placeholder)}"` : ''}${aria ? ` aria-label="${esc(aria)}"` : ''}>${esc(value)}</textarea>`;
+  if (collapsible) return box + `<div class="preview-wrap rich-wrap"${hasBold(value) ? '' : ' hidden'}>${previewBodyHTML(rich(value))}</div>`;
+  return box + `<span class="rich-preview" aria-hidden="true"${hasBold(value) ? '' : ' hidden'}>${rich(value)}</span>`;
 }
 
 function smartFieldsHTML(values = {}, req = true) {
@@ -1168,16 +1280,53 @@ function smartFieldsHTML(values = {}, req = true) {
     </label>`).join('');
 }
 
-function descriptionFieldHTML(value = '', req = true) {
-  return `
+// SMART goals get a Markdown checkbox above the box and a live Markdown preview under it.
+// markdown: null means no checkbox (other types); otherwise the checkbox's starting state.
+// smartOnly hides only the Markdown switch unless the type is SMART (the create form).
+function descriptionFieldHTML(value = '', req = true, { markdown = null, smartOnly = false } = {}) {
+  const text = richBoxHTML({ name: 'description', value, max: 1000, req, rows: 2, placeholder: 'What this is, in a sentence or two', aria: 'Description', collapsible: true });
+  if (markdown === null) return `
     <label class="field"><span>Description${req ? ` ${REQ}` : ''}</span>
-      ${richBoxHTML({ name: 'description', value, max: 1000, req, rows: 2, placeholder: 'What this is, in a sentence or two' })}</label>`;
+      ${text}</label>`;
+  // The Markdown switch sits on the same line as the label, on the right.
+  return `
+    <div class="md-field${markdown ? ' md-on' : ''}" data-md-field>
+      <div class="md-head">
+        <span class="md-title">Description${req ? ` ${REQ}` : ''}</span>
+        <label class="md-toggle"${smartOnly ? ' data-only="smart" hidden' : ''}><input type="checkbox" name="descMarkdown" data-md-toggle${markdown ? ' checked' : ''}> Markdown</label>
+      </div>
+      ${text}
+      <div class="md-preview preview-wrap">${previewBodyHTML(markdown ? renderMarkdown(value) : '', !markdown || !value.trim())}</div>
+    </div>`;
+}
+
+// Shows or hides the Markdown preview under a description box, and fills it from the text.
+function syncMarkdown(field) {
+  const on = !!field.querySelector('[data-md-toggle]')?.checked;
+  field.classList.toggle('md-on', on);
+  const html = on ? renderMarkdown(field.querySelector('textarea').value) : '';
+  const wrap = field.querySelector('.md-preview');
+  wrap.querySelector('.preview-body').innerHTML = html;
+  wrap.querySelector('.preview-toggle').hidden = !html;
 }
 
 function whyFieldHTML(value = '', req = true) {
   return `
     <label class="field"><span>Why${req ? ` ${REQ}` : ''}</span>
       ${richBoxHTML({ name: 'why', value, max: 500, req, rows: 2, placeholder: 'The reason this matters to you' })}</label>`;
+}
+
+// For things that can only be checked the next morning. Each day is then recorded the day after it.
+// Same look as the other choices: two cards. "Next day" is for things you can only tell about the next morning.
+function nextMorningFieldHTML(checked = false) {
+  return `
+    <div class="field"><span>Check-in</span>
+      <small class="muted field-hint">Next day: for what you can only tell the next morning.</small>
+      <div class="type-toggle two" role="radiogroup" aria-label="Check-in">
+        <label class="type-card"><input type="radio" name="nextMorning" value="same"${checked ? '' : ' checked'}><strong>Same day</strong></label>
+        <label class="type-card"><input type="radio" name="nextMorning" value="next"${checked ? ' checked' : ''}><strong>Next day</strong></label>
+      </div>
+    </div>`;
 }
 
 // One row of the SMART plan: what to do on the left, how much and per day or week on the right.
@@ -1211,7 +1360,7 @@ function planHTML(rows = [], req = true, notes = false) {
   return `
     <div class="field plan-field">
       <span>Plan: actionable and measurable${req ? ` ${REQ}` : ''}</span>
-      <p class="muted field-hint">Left: what you will do. Right: how much, per day or per week. Add one row for each action.</p>
+      <p class="muted field-hint">Left: what you do. Right: how much, and how often.</p>
       <label class="check-row"><input type="checkbox" name="smartNotes" data-notes-toggle${notes ? ' checked' : ''}> Add a note to each actionable item</label>
       <div class="plan${notes ? ' show-notes' : ''}" data-plan>
         <datalist id="unit-list">${L.UNIT_SUGGESTIONS.map((u) => `<option value="${esc(u)}">`).join('')}</datalist>
@@ -1222,11 +1371,17 @@ function planHTML(rows = [], req = true, notes = false) {
     </div>`;
 }
 
+// The start date in the open form (today when blank).
+function goalStartIn(root) {
+  const f = root.querySelector('form');
+  return f?.querySelector('[name="startDate"]')?.value || L.todayStr();
+}
+
 // Days the goal runs, from the dates in the open form. 0 while they are not valid yet.
 function goalDaysIn(root) {
   const f = root.querySelector('form');
   const val = (n) => f?.querySelector(`[name="${n}"]`)?.value || '';
-  const start = val('startDate') || L.todayStr();
+  const start = goalStartIn(root);
   try {
     return L.smartLength(start, L.resolveSmartEnd(start, { endDate: val('endDate'), days: val('days') }));
   } catch {
@@ -1237,13 +1392,14 @@ function goalDaysIn(root) {
 // Each row with a total: the amount box becomes the total divided over the goal, per the row's period.
 function refreshTotals(root) {
   const days = goalDaysIn(root);
+  const start = goalStartIn(root);
   root.querySelectorAll('[data-plan-row]').forEach((row) => {
     const totalEl = row.querySelector('[name="p_total"]');
     const hint = row.querySelector('[data-total-hint]');
     if (!totalEl.value.trim()) { hint.textContent = ''; return; }
     const per = row.querySelector('[name="p_per"]').value;
     const unit = row.querySelector('[name="p_unit"]').value.trim();
-    const value = L.perPeriodAmount(totalEl.value, days, per, unit);
+    const value = L.perPeriodAmount(totalEl.value, days, per, unit, start);
     if (value === null) {
       hint.textContent = days ? 'Enter a total above zero.' : 'Pick the start date and the deadline (or days) to divide the total.';
       return;
@@ -1315,7 +1471,7 @@ function updateEndHint(form) {
   const start = form.querySelector('[name="startDate"]').value;
   const days = Math.floor(Number(form.querySelector('[name="days"]').value));
   const end = form.querySelector('[name="endDate"]').value;
-  let text = 'Give a deadline, or leave it empty and give the days.';
+  let text = 'Or leave it blank and give the days.';
   if (end) text = `Deadline set to ${fmtDate(end)}.`;
   else if (start && days > 0) text = `Ends on ${fmtDate(L.addDays(start, days - 1))}.`;
   hint.textContent = text;
@@ -1331,11 +1487,11 @@ function openCreate() {
         <label class="type-card"><input type="radio" name="type" value="sankalpa">
           ${icon('scroll')}<strong>Sankalpa</strong></label>
         <label class="type-card"><input type="radio" name="type" value="smart">
-          ${icon('target')}<strong>SMART goal</strong></label>
+          ${icon('target')}<strong>SMART Goal</strong></label>
       </div>
       <label class="field"><span data-title-label>Habit</span>
         <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" autocomplete="off"></label>
-      ${descriptionFieldHTML('', false)}
+      ${descriptionFieldHTML('', false, { markdown: false, smartOnly: true })}
       ${whyFieldHTML('', false)}
       <div class="field-row">
         <label class="field"><span>Start date</span>
@@ -1343,14 +1499,14 @@ function openCreate() {
         <label class="field" data-only="sankalpa smart" hidden><span>Days ${REQ}</span>
           <input name="days" type="number" min="1" max="365" inputmode="numeric" placeholder="e.g. 30"></label>
       </div>
+      ${nextMorningFieldHTML(false)}
       <div class="field-row" data-only="smart" hidden>
         <label class="field"><span>Deadline ${REQ}</span>
+          <small class="muted field-hint" data-end-hint>Or leave it blank and give the days.</small>
           <input name="endDate" type="date"></label>
-        <p class="muted form-hint end-hint" data-end-hint>Give a deadline, or leave it empty and give the days.</p>
       </div>
       <div data-only="smart" hidden>
-        <h3 class="form-sub">${icon('target')} Describe the goal, then build the plan. You log your numbers every day.</h3>
-        ${smartFieldsHTML({}, false)}
+                ${smartFieldsHTML({}, false)}
         ${planHTML([], false)}
       </div>
       <div class="field"><span>Icon</span>${iconDropdown('', { auto: true })}</div>
@@ -1390,6 +1546,7 @@ function openCreate() {
             type: fd.get('type'),
             title: fd.get('title'),
             description: fd.get('description'),
+            descMarkdown: fd.get('descMarkdown') === 'on',
             why: fd.get('why'),
             days: fd.get('days'),
             startDate: fd.get('startDate'),
@@ -1397,6 +1554,7 @@ function openCreate() {
             smart: smartFromForm(fd),
             icon: fd.get('icon'),
             color: fd.get('color'),
+            nextMorning: fd.get('nextMorning') === 'next',
             order: L.nextOrder(state.goals),
           });
           const id = await db.createGoal(state.user.uid, data);
@@ -1419,7 +1577,7 @@ function openRedo(g, { fromMiss = false } = {}) {
   const d = L.redoDefaults(g);
   const body = `
     <form id="redo-form" class="form" novalidate>
-      <p class="muted">${esc(g.title)} starts again as a new ${esc(typeName(g).toLowerCase())}. The accomplished record stays where it is.</p>
+      <p class="muted">${esc(g.title)} starts again as a new ${esc(typeName(g).toLowerCase())}. The ${g.status === 'deleted' ? 'deleted' : 'accomplished'} record stays where it is.</p>
       ${descriptionFieldHTML(d.description)}
       ${whyFieldHTML(d.why)}
       <label class="field"><span>Start date ${REQ}</span>
@@ -1476,26 +1634,26 @@ function openGoalSettings(g) {
   const startEditable = isSmart || (g.status === 'active' && !hasCheckins);
   // Only what the journey cannot work without is required: a sankalpa's days, and a SMART goal's days or deadline.
   const lengthField = g.type === 'habit' ? '' : `
-    <label class="field"><span>Days${g.type === 'sankalpa' ? ` ${REQ}` : ''}</span>
+    <label class="field"><span>Days${g.type === 'sankalpa' || isSmart ? ` ${REQ}` : ''}</span>
       <input name="days" type="number" min="1" max="365" inputmode="numeric" value="${g.targetDays}"></label>`;
 
   const body = `
     <form id="edit-form" class="form" novalidate>
       <label class="field"><span>${esc(L.TYPE_LABEL[g.type] || 'Habit')}</span>
         <input name="title" maxlength="80" value="${esc(g.title)}"></label>
-      ${descriptionFieldHTML(g.description || '', false)}
+      ${descriptionFieldHTML(g.description || '', false, isSmart ? { markdown: !!g.descMarkdown } : {})}
       ${whyFieldHTML(g.why || '', false)}
       <div class="field-row">
         <label class="field"><span>Start date${startEditable ? '' : ' <small class="muted">(locked after the first check-in)</small>'}</span>
           <input name="startDate" type="date" value="${esc(g.attemptStart)}" ${startEditable ? '' : 'disabled'}></label>
         ${g.type === 'habit' ? '' : lengthField}
       </div>
+      ${nextMorningFieldHTML(L.isNextMorning(g))}
       ${isSmart ? `
-        <label class="field"><span>Deadline</span>
+        <label class="field"><span>Deadline ${REQ}</span>
+          <small class="muted field-hint">Fill one. The other follows.</small>
           <input name="endDate" type="date" value="${esc(g.smart.endDate)}"></label>
-        <p class="muted form-hint">Give a deadline, or the days. If you change the days, the deadline follows them.</p>
-        <h3 class="form-sub">${icon('target')} Describe the goal, then build the plan. You log your numbers every day.</h3>
-        ${smartFieldsHTML(g.smart, false)}
+                ${smartFieldsHTML(g.smart, false)}
         ${planHTML(g.smart.plan || [], false, !!g.smart.notes)}` : ''}
       <div class="field"><span>Icon</span>${iconDropdown(g.icon)}</div>
       <div class="field"><span>Colour</span>${colorDropdown(g.color)}</div>
@@ -1504,10 +1662,10 @@ function openGoalSettings(g) {
         <div><strong>Abandon this journey</strong><small class="muted">It moves to Not accomplished. Nothing is deleted.</small></div>
         <button type="button" class="btn danger sm" data-abandon>Abandon</button>
       </div>
-      <div class="danger-zone">
-        <div><strong>Delete this journey</strong><small class="muted">Removes it and its whole history for good.</small></div>
+      ${g.status === 'completed' ? '' : `<div class="danger-zone">
+        <div><strong>Delete this journey</strong><small class="muted">It moves to Deleted, with its history. You can redo it from there.</small></div>
         <button type="button" class="btn danger sm" data-delete>Delete</button>
-      </div>
+      </div>`}
     </form>`;
   openModal({
     title: 'Edit journey',
@@ -1518,6 +1676,21 @@ function openGoalSettings(g) {
       const errBox = w.querySelector('[data-error]');
       wireDropdowns(w);
       wirePlan(w);
+      // SMART goals: fill the days or the deadline, and the other one follows.
+      if (isSmart) {
+        form.addEventListener('input', (e) => {
+          const startVal = form.querySelector('[name="startDate"]').value;
+          const daysEl = form.querySelector('[name="days"]');
+          const endEl = form.querySelector('[name="endDate"]');
+          if (!startVal) return;
+          if (e.target === daysEl) {
+            const n = Math.floor(Number(daysEl.value));
+            if (n >= 1 && n <= L.SMART_MAX_DAYS) endEl.value = L.addDays(startVal, n - 1);
+          } else if (e.target === endEl && endEl.value) {
+            try { daysEl.value = L.smartLength(startVal, endEl.value); } catch { /* deadline before start: leave the days */ }
+          }
+        });
+      }
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         errBox.hidden = true;
@@ -1529,6 +1702,7 @@ function openGoalSettings(g) {
             title,
             description: L.optionalText(fd.get('description'), 1000),
             why: L.optionalText(fd.get('why'), 500),
+            ...(isSmart ? { descMarkdown: fd.get('descMarkdown') === 'on' } : {}),
             icon: fd.get('icon') || g.icon,
             color: fd.get('color') || g.color,
           };
@@ -1537,6 +1711,7 @@ function openGoalSettings(g) {
             fields.attemptStart = L.normalizeStartDate(fd.get('startDate'));
           }
           if (g.type === 'sankalpa') fields.targetDays = L.cleanSankalpaDays(g, fd.get('days'));
+          fields.nextMorning = fd.get('nextMorning') === 'next';
           if (isSmart) {
             const start = fields.attemptStart || g.attemptStart;
             const daysText = String(fd.get('days') ?? '').trim();
@@ -1580,19 +1755,19 @@ function openGoalSettings(g) {
           toast(err.message, 'error');
         }
       });
-      w.querySelector('[data-delete]').addEventListener('click', async () => {
+      w.querySelector('[data-delete]')?.addEventListener('click', async () => {
         const ok = await confirmDialog({
           title: 'Delete this journey?',
-          message: `"${esc(g.title)}" and its whole history will be permanently deleted. This cannot be undone.`,
+          message: `"${esc(g.title)}" moves to Deleted. Its history is kept, and you can redo it from there.`,
           confirmLabel: 'Delete',
           danger: true,
         });
         if (!ok) return;
         try {
-          await db.deleteGoal(state.user.uid, g.id);
+          await db.softDeleteGoal(state.user.uid, g.id);
           close();
           location.hash = '#/journeys';
-          toast('Journey deleted', 'info');
+          toast('Journey moved to Deleted', 'info');
         } catch (err) {
           toast(err.message, 'error');
         }
@@ -1620,6 +1795,8 @@ function openAccount() {
 
 // ---------- actions ----------
 
+const checkinsInFlight = new Set();
+
 async function checkin(goalId, date, answer) {
   const g = state.goals.find((x) => x.id === goalId);
   if (!g) return;
@@ -1638,6 +1815,10 @@ async function checkin(goalId, date, answer) {
     });
     if (!ok) return;
   }
+  // A second tap on the same day while the first is still saving is ignored.
+  const key = `${goalId}|${date}`;
+  if (checkinsInFlight.has(key)) return;
+  checkinsInFlight.add(key);
   try {
     const res = await db.checkIn(state.user.uid, goalId, date, answer);
     if (res.outcome === 'completed') {
@@ -1651,6 +1832,8 @@ async function checkin(goalId, date, answer) {
     }
   } catch (err) {
     toast(err.message || 'Could not save. Check your connection.', 'error');
+  } finally {
+    checkinsInFlight.delete(key);
   }
 }
 
@@ -1667,6 +1850,8 @@ async function saveSmart(goalId, form) {
     date: i.dataset.logDate,
     value: i.value.trim(),
   }));
+  if (checkinsInFlight.has(goalId)) return;   // a second press while the first save runs is ignored
+  checkinsInFlight.add(goalId);
   try {
     const res = await db.saveSmartLog(state.user.uid, goalId, entries);
     for (const k of Object.keys(state.drafts)) {
@@ -1676,6 +1861,21 @@ async function saveSmart(goalId, form) {
     else toast('Numbers saved', 'success');
   } catch (err) {
     toast(err.message || 'Could not save. Check your connection.', 'error');
+  } finally {
+    checkinsInFlight.delete(goalId);
+  }
+}
+
+// Sankalpas saved before the fix can be finished in the database but still marked active, with nothing left to do.
+// Marks them accomplished once, so the record in Firestore matches the rules.
+function repairFinishedSankalpas() {
+  if (!state.user) return;
+  for (const g of state.goals) {
+    if (g.status === 'active' && g.type === 'sankalpa' && L.doneCount(g) >= g.targetDays) {
+      const now = new Date().toISOString();
+      db.updateGoalDetails(state.user.uid, g.id, { status: 'completed', completedAt: now })
+        .catch((err) => console.warn('Could not finish sankalpa', err));
+    }
   }
 }
 
@@ -1716,12 +1916,9 @@ function onViewClick(e) {
       case 'smart-save': saveSmart(act.dataset.goal, act.closest('[data-smart-form]')); break;
       case 'goal-settings': openGoalSettings(state.goals.find((x) => x.id === act.dataset.goal)); break;
       case 'acc-tab': state.accTab = act.dataset.tab; render(); break;
+      case 'check-view': state.checkView = state.checkView === act.dataset.view ? null : act.dataset.view; render(); break;
       case 'redo': openRedo(state.goals.find((x) => x.id === act.dataset.goal)); break;
       case 'redo-miss': openRedo(state.goals.find((x) => x.id === act.dataset.goal), { fromMiss: true }); break;
-      case 'day-pick':
-        state.pickDay[act.dataset.goal] = act.dataset.date;
-        render();
-        break;
       case 'reorder': state.reorder = !state.reorder; render(); break;
       case 'type-toggle': state.openType = state.openType === act.dataset.type ? null : act.dataset.type; render(); break;
       default: break;
@@ -1874,7 +2071,7 @@ async function boot() {
     if (!unsubscribeGoals) {
       unsubscribeGoals = db.subscribeGoals(
         user.uid,
-        (goals) => { state.goals = goals; state.goalsReady = true; ensureOrder(); render(); },
+        (goals) => { state.goals = goals; state.goalsReady = true; ensureOrder(); repairFinishedSankalpas(); render(); },
         (err) => toast(`Could not load your data: ${err.message}`, 'error'),
       );
     }
@@ -1882,7 +2079,12 @@ async function boot() {
   });
 
   // Re-render every minute so day boundaries (and "unlocks tomorrow") update without a reload.
-  setInterval(() => { if (state.user) render(); }, 60000);
+  // Skipped while a number box in the page has the cursor, so a half-typed number is never replaced.
+  setInterval(() => {
+    const a = document.activeElement;
+    const typing = !!a && view().contains(a) && a.matches('input, textarea, select');
+    if (state.user && !typing) render();
+  }, 60000);
 
   render();
 }

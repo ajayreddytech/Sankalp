@@ -4,8 +4,9 @@ import { ICON_NAMES, COLOURS, ICON_GROUPS } from '../js/choices.js';
 import {
   newGoalData, applyCheckin, applyAbandon, journey, totalCells, addDays, diffDays, notAccomplished, accomplished,
   suggestIcon, redoData, redoDefaults, exceptionAvailability, cleanPlan, resolveSmartEnd, smartProgress, titleCase,
-  applySmartLog, smartPhase, sortByOrder, nextOrder, optionalText, nextActionText, checkinSummary, cleanSankalpaDays,
+  smartBrief, checkinCounts, inCheckinGroup, nextDueDate, isOverdue, applyDelete, deletedGroups, accomplishedGroups, applySmartLog, smartPhase, sortByOrder, nextOrder, optionalText, nextActionText, checkinSummary, cleanSankalpaDays,
   cleanSmart, checkinDay, dayNumber, periodLabel, perPeriodAmount, isNextMorning, startInfo,
+  PERIOD_OPTIONS, PERIOD_SHORT, planUnit, dayTargetOf, countsOn, needsCheckin, MAX_PROJECTED_DAYS,
 } from '../js/logic.js';
 
 const WHY = 'It makes me feel steady';
@@ -326,13 +327,25 @@ test('the day map: a day stays open until its numbers are met, then the next day
   assert.equal(p.days[1].state, 'active');
 });
 
-test('a missed day stays open: later days queue behind it', () => {
+test('a past day with nothing logged is missed and closed; the current day is the open one', () => {
   const s = smartGoal('d2', { startDate: '2026-01-01', endDate: '2026-01-30', now: at('2026-01-01') });
   const p = smartProgress(s, '2026-01-03');
-  assert.equal(p.openDay, '2026-01-01');
-  assert.equal(p.days[1].state, 'queued');
-  assert.equal(p.days[2].state, 'queued');
+  assert.equal(p.days[0].state, 'missed');
+  assert.equal(p.days[1].state, 'missed');
+  assert.equal(p.openDay, '2026-01-03');
+  assert.equal(p.days[2].state, 'active');
   assert.equal(p.days[3].state, 'locked');
+});
+
+test('a closed day shows partial with its percentage, or missed at zero', () => {
+  const s = smartGoal('d3', { startDate: '2026-01-01', endDate: '2026-01-10', now: at('2026-01-01') });
+  const g = { ...s, smart: { ...s.smart, plan: [{ action: 'Read', amount: 4, per: 'day' }] } };
+  const half = { ...g, logs: { '2026-01-01': { 0: 2 } } };
+  const p = smartProgress(half, '2026-01-02');
+  assert.equal(p.days[0].state, 'partial');
+  assert.equal(p.days[0].percent, 50);
+  assert.equal(smartProgress({ ...g, logs: { '2026-01-01': { 0: 0 } } }, '2026-01-02').days[0].state, 'missed');
+  assert.throws(() => applySmartLog(half, [{ index: 0, date: '2026-01-01', value: 3 }], at('2026-01-02')), /closed/);
 });
 
 test('a slow pace stretches the end date and reports that it was extended', () => {
@@ -397,7 +410,7 @@ test('SMART logging is refused before the start and for days not yet reached', (
 test('a SMART goal never expires on its own: the end date moves with the pace', () => {
   const s = smartGoal('p7', { startDate: '2026-01-01', endDate: '2026-01-05', now: at('2026-01-01') });
   assert.equal(notAccomplished([s], '2026-02-01').length, 0);
-  assert.equal(nextActionText(s, '2026-01-02').kind, 'overdue');
+  assert.equal(nextActionText(s, '2026-01-02').kind, 'today');
 });
 
 test('abandoning a SMART goal records how many targets were met', () => {
@@ -589,7 +602,7 @@ test('a next-morning journey counts only the days checked in, not the calendar',
   const res = applyCheckin(g, '2026-01-01', 'yes', at('2026-01-02'));
   const after = { ...g, checkins: res.patch.checkins };
   assert.equal(dayNumber(after, '2026-01-09'), 1);       // still only one check-in
-  assert.equal(dayNumber({ ...g, title: 'Read' }, '2026-01-09'), 9);   // other journeys keep the calendar count
+  assert.equal(dayNumber({ ...g, nextMorning: false }, '2026-01-09'), 9);   // a journey not set to check in the next day keeps the calendar count
 });
 
 test('hours per day and Pomodoros per day plan items count per day', () => {
@@ -606,7 +619,7 @@ test('hours per day and Pomodoros per day plan items count per day', () => {
 
 test('a total over the whole goal divides into an amount per period', () => {
   assert.equal(perPeriodAmount(30, 10, 'day'), 3);          // 30 items over 10 days is 3 a day
-  assert.equal(perPeriodAmount(10, 30, 'day', 'hr'), 0.33);  // a measured unit keeps two decimals
+  assert.equal(perPeriodAmount(10, 30, 'day', 'hr'), 0.333333);  // a measured unit keeps its precision
   assert.equal(perPeriodAmount(10, 30, 'day'), 1);           // whole things round up, so the 10 is reached
   assert.equal(perPeriodAmount(10, 30, 'day', 'pomodoros'), 1);
   assert.equal(perPeriodAmount(12, 14, 'week'), 6);         // 12 over two weeks is 6 a week
@@ -632,6 +645,15 @@ test('the name matches in any capitals, with or without accents and punctuation'
   assert.equal(isNextMorning({ title: 'Kama Digvijaya Sankalpa' }), false);
 });
 
+test('any journey can be set to check in the next day, and a saved choice beats the name', () => {
+  const g = newGoalData({ type: 'sankalpa', title: 'Chant', days: 10, startDate: '2026-01-05', nextMorning: true, now: at('2026-01-01') });
+  assert.equal(g.nextMorning, true);
+  assert.equal(isNextMorning(g), true);
+  assert.equal(checkinDay(g, '2026-01-05'), '2026-01-04');
+  assert.equal(isNextMorning({ title: 'Kama Digvijaya Sankalpam', nextMorning: false }), false);
+  assert.equal(isNextMorning({ title: 'Read', nextMorning: undefined }), false);
+});
+
 test('WhatsApp-style markers keep their first letter capitalised', () => {
   assert.equal(titleCase('_italic_ text'), '_Italic_ Text');
   assert.equal(titleCase('~strike~ word'), '~Strike~ Word');
@@ -648,4 +670,244 @@ test('a journey page says Started once its day has come, and Starting before, wi
   assert.deepEqual(startInfo('2026-12-02', today), { word: 'Starting', text: 'In 12 Days' });
   assert.deepEqual(startInfo('2026-12-15', today), { word: 'Starting', text: 'Next Month' });
   assert.deepEqual(startInfo('2027-02-10', today), { word: 'Starting', text: null });
+});
+
+test('every period has a label and a short form; weekday and weekend count only their days', () => {
+  assert.equal(PERIOD_OPTIONS.length, 11);
+  for (const [k] of PERIOD_OPTIONS) assert.ok(PERIOD_SHORT[k], k);
+  assert.equal(periodLabel('weekday'), 'per weekday');
+  assert.equal(PERIOD_SHORT.weekend, '/wkend');
+  assert.equal(planUnit({ per: 'quarter' }).per, 'quarter');
+  assert.equal(planUnit({ per: 'nonsense' }).per, 'day');
+  // 2026-01-05 is a Monday, 2026-01-10 a Saturday.
+  assert.equal(countsOn('weekday', '2026-01-05'), true);
+  assert.equal(countsOn('weekday', '2026-01-10'), false);
+  assert.equal(countsOn('weekend', '2026-01-10'), true);
+  assert.equal(countsOn('twodays', '2026-01-10'), true);
+});
+
+test('a weekday item totals the weekdays of the goal, and needs nothing on a weekend', () => {
+  const g = {
+    id: 'w', ...newGoalData({
+      type: 'smart', title: 'Study', startDate: '2026-01-05', days: 14, now: at('2026-01-01'),
+      smart: { specific: 'a', realistic: 'b', timeBound: 'c', plan: [{ action: 'Study', amount: 2, per: 'weekday' }] },
+    }),
+  };
+  const p = smartProgress(g, '2026-01-05');
+  assert.equal(p.items[0].total, 20);                              // 10 weekdays in 14 days, 2 each
+  assert.equal(dayTargetOf(p.items[0], '2026-01-10'), 0);          // Saturday
+  assert.equal(dayTargetOf(p.items[0], '2026-01-05'), 2);          // Monday
+  assert.equal(perPeriodAmount(20, 14, 'weekday', '', '2026-01-05'), 2);
+  assert.equal(perPeriodAmount(10, 14, 'twodays', 'hr'), 1.428571);    // 7 two-day periods
+  assert.equal(perPeriodAmount(12, 180, 'sixmonths', 'hr'), 12);
+  assert.equal(perPeriodAmount(365, 365, 'year', 'hr'), 365);
+});
+
+test('the daily brief: a goal behind pace is lagging, with the item to focus on and the days it is behind', () => {
+  const s = smartGoal('b1', { startDate: '2026-01-01', endDate: '2026-01-10', now: at('2026-01-01') });
+  const plan = [{ action: 'Read', amount: 1, per: 'day', unit: 'pages' }];
+  const g = { ...s, smart: { ...s.smart, plan } };
+  const b = smartBrief({ ...g, logs: { '2026-01-04': { 0: 1 } } }, '2026-01-04');
+  assert.equal(b.status, 'behind');
+  assert.ok(b.shift > 0);
+  assert.equal(b.focus[0].action, 'Read');
+  assert.equal(b.focus[0].expected, 4);
+  assert.equal(b.focus[0].catchUp, 3);
+  assert.equal(b.strengths.length, 0);
+});
+
+test('the daily brief: a goal ahead of pace finishes early and lists what is going well', () => {
+  const s = smartGoal('b2', { startDate: '2026-01-01', endDate: '2026-01-10', now: at('2026-01-01') });
+  const plan = [{ action: 'Read', amount: 1, per: 'day', unit: 'pages' }];
+  const g = { ...s, smart: { ...s.smart, plan } };
+  const b = smartBrief({ ...g, logs: { '2026-01-04': { 0: 8 } } }, '2026-01-04');
+  assert.equal(b.status, 'ahead');
+  assert.ok(b.shift < 0);
+  assert.equal(b.focus.length, 0);
+  assert.equal(b.strengths[0].action, 'Read');
+});
+
+test('the daily brief: today shows what is still due, and nothing once today is met', () => {
+  const s = smartGoal('b3', { startDate: '2026-01-01', endDate: '2026-01-10', now: at('2026-01-01') });
+  const plan = [{ action: 'Read', amount: 2, per: 'day', unit: 'pages' }];
+  const g = { ...s, smart: { ...s.smart, plan } };
+  assert.equal(smartBrief({ ...g, logs: { '2026-01-02': { 0: 0.5 } } }, '2026-01-02').today[0].todayShort, 1.5);
+  assert.equal(smartBrief({ ...g, logs: { '2026-01-02': { 0: 2 } } }, '2026-01-02').today.length, 0);
+});
+
+test('deleting keeps the journey: it moves to Deleted with its history, grouped by type and title', () => {
+  const a = { ...newGoalData({ type: 'habit', title: 'Read', startDate: '2026-01-01', now: at('2026-01-01') }), id: 'x1' };
+  const b = { ...newGoalData({ type: 'habit', title: 'read', startDate: '2026-02-01', now: at('2026-02-01') }), id: 'x2' };
+  const patch = applyDelete(a, at('2026-01-05'));
+  assert.equal(patch.status, 'deleted');
+  assert.ok(patch.deletedAt);
+  assert.throws(() => applyDelete({ ...a, status: 'deleted' }), /already deleted/);
+  const goals = [{ ...a, ...patch }, { ...b, status: 'deleted', deletedAt: '2026-02-03T10:00:00.000Z' }];
+  const groups = deletedGroups(goals);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].count, 2);
+  assert.equal(groups[0].type, 'habit');
+});
+
+test('a deleted journey can be redone as a new journey', () => {
+  const a = { ...newGoalData({ type: 'sankalpa', title: 'Walk', days: 30, startDate: '2026-01-01', now: at('2026-01-01') }), id: 'x3' };
+  const deleted = { ...a, status: 'deleted' };
+  const data = redoData(deleted, { fromMiss: true, startDate: '2026-03-01', days: 30, now: at('2026-03-01') });
+  assert.equal(data.status, 'active');
+  assert.equal(data.redoOf, 'x3');
+  assert.equal(data.title, 'Walk');
+});
+
+test('sankalpas accomplished back to back with no gap become a habit once their days reach 66', () => {
+  const sank = (id, start, days, end) => ({
+    id, title: 'Walk', type: 'sankalpa', status: 'completed', attemptStart: start, targetDays: days,
+    completedAt: `${end}T10:00:00.000Z`, checkins: { [end]: 'done' },
+  });
+  const run = [sank('a', '2026-01-01', 30, '2026-01-30'), sank('b', '2026-01-31', 20, '2026-02-19'), sank('c', '2026-02-20', 20, '2026-03-11')];
+  const groups = accomplishedGroups(run);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].type, 'habit');   // 70 days, no gaps
+  assert.equal(groups[0].count, 3);
+});
+
+test('a gap between accomplished sankalpas keeps them as sankalpas, even if the days add up', () => {
+  const sank = (id, start, days, end) => ({
+    id, title: 'Walk', type: 'sankalpa', status: 'completed', attemptStart: start, targetDays: days,
+    completedAt: `${end}T10:00:00.000Z`, checkins: { [end]: 'done' },
+  });
+  const goals = [sank('a', '2026-01-01', 30, '2026-01-30'), sank('b', '2026-01-31', 20, '2026-02-19'), sank('d', '2026-03-01', 20, '2026-03-20')];
+  assert.ok(accomplishedGroups(goals).every((g) => g.type === 'sankalpa'));
+});
+
+test('back-to-back sankalpas under 66 days in total stay sankalpas', () => {
+  const sank = (id, start, days, end) => ({
+    id, title: 'Walk', type: 'sankalpa', status: 'completed', attemptStart: start, targetDays: days,
+    completedAt: `${end}T10:00:00.000Z`, checkins: { [end]: 'done' },
+  });
+  const goals = [sank('a', '2026-01-01', 30, '2026-01-30'), sank('e', '2026-01-31', 30, '2026-03-01')];
+  assert.ok(accomplishedGroups(goals).every((g) => g.type === 'sankalpa'));
+});
+
+test('accomplished journeys cannot be deleted', () => {
+  const g = { id: 'c1', title: 'Walk', type: 'sankalpa', status: 'completed', completedAt: '2026-03-01T10:00:00.000Z' };
+  assert.throws(() => applyDelete(g, at('2026-03-02')), /cannot be deleted/);
+});
+
+test('check-in counts: one journey is today, overdue or tomorrow, and tomorrow includes ones done today', () => {
+  const habit = (id, startDate, checkins = {}) => ({
+    ...newGoalData({ type: 'habit', title: id, startDate, now: at(startDate) }), id, checkins,
+  });
+  const goals = [
+    habit('overdue', '2026-01-01'),                          // day 1 never checked in
+    habit('today', '2026-01-02'),                            // due today
+    habit('done', '2026-01-02', { '2026-01-02': 'done' }),   // done today, next is tomorrow
+  ];
+  assert.deepEqual(checkinCounts(goals, '2026-01-02'), { today: 1, overdue: 1, tomorrow: 1 });
+});
+
+test('each Check In group lists its own journeys, and the counts match the lists', () => {
+  const habit = (id, startDate, checkins = {}) => ({
+    ...newGoalData({ type: 'habit', title: id, startDate, now: at(startDate) }), id, checkins,
+  });
+  const goals = [habit('overdue', '2026-01-01'), habit('today', '2026-01-02'), habit('done', '2026-01-02', { '2026-01-02': 'done' })];
+  const names = (group) => goals.filter((g) => inCheckinGroup(g, group, '2026-01-02')).map((g) => g.id);
+  assert.deepEqual(names('today'), ['today']);
+  assert.deepEqual(names('overdue'), ['overdue']);
+  assert.deepEqual(names('tomorrow'), ['done']);
+  const counts = checkinCounts(goals, '2026-01-02');
+  assert.equal(counts.today, names('today').length);
+  assert.equal(counts.overdue, names('overdue').length);
+  assert.equal(counts.tomorrow, names('tomorrow').length);
+});
+
+test('a SMART day with any numbers logged is checked in, even if the targets are not met', () => {
+  const s = smartGoal('p1', { startDate: '2026-01-01', endDate: '2026-01-10', now: at('2026-01-01') });
+  const g = { ...s, smart: { ...s.smart, plan: [{ action: 'Read', amount: 1, per: 'day' }] } };
+  // Day 1: a zero is logged. Not met, but checked in, so it is not overdue on day 2.
+  const logged = { ...g, logs: { '2026-01-01': { 0: 0 } } };
+  assert.equal(nextDueDate(logged, '2026-01-02'), '2026-01-02');
+  assert.equal(isOverdue(logged, '2026-01-02'), false);
+  // Day 1 with nothing logged is missed on day 3, not overdue: past days are closed.
+  assert.equal(isOverdue(g, '2026-01-03'), false);
+  assert.equal(smartProgress(g, '2026-01-03').days[0].state, 'missed');
+});
+
+// ---------- regression tests for the critical fixes ----------
+
+const planGoal = (plan, logs = {}, extra = {}) => ({
+  id: 'r', type: 'smart', status: 'active', title: 'Plan', attemptStart: '2026-01-01', targetDays: 10,
+  smart: { plan, endDate: '2026-01-10', notes: false }, logs, checkins: {}, ...extra,
+});
+const twoItems = [
+  { action: 'Read', amount: 1, per: 'day', unit: '', key: 0 },
+  { action: 'Walk', amount: 1, per: 'day', unit: '', key: 1 },
+];
+
+test('a partly entered SMART day stays due today until every item has a number', () => {
+  const g = planGoal(twoItems, { '2026-01-02': { 0: 1 } });
+  assert.equal(nextDueDate(g, '2026-01-02'), '2026-01-02');
+  assert.equal(checkinCounts([g], '2026-01-02').today, 1);
+  assert.equal(checkinCounts([g], '2026-01-02').tomorrow, 0);
+  assert.equal(checkinSummary([g], '2026-01-02').filled, 0);
+  const full = planGoal(twoItems, { '2026-01-02': { 0: 1, 1: 0 } });
+  assert.equal(nextDueDate(full, '2026-01-02'), '2026-01-03');
+  assert.equal(checkinSummary([full], '2026-01-02').filled, 1);
+});
+
+test('numbers logged before the start date or after today do not count', () => {
+  const g = planGoal([{ action: 'Read', amount: 10, per: 'day', unit: '', key: 0 }], {
+    '2025-12-30': { 0: 50 },   // before the start
+    '2026-01-01': { 0: 2 },
+    '2026-01-05': { 0: 99 },   // after today
+  });
+  const p = smartProgress(g, '2026-01-02');
+  assert.equal(p.items[0].done, 2);
+});
+
+test('a sankalpa cannot be shortened to the days already done', () => {
+  const g = { id: 's', type: 'sankalpa', status: 'active', targetDays: 10, attemptStart: '2026-01-01', history: [], logs: {},
+    checkins: { '2026-01-01': 'done', '2026-01-02': 'done', '2026-01-03': 'done' } };
+  assert.throws(() => cleanSankalpaDays(g, '3'), /already done/);
+  assert.equal(cleanSankalpaDays(g, '4'), 4);
+});
+
+test('a SMART goal with no plan is never due and never stuck in Today', () => {
+  const g = planGoal([]);
+  assert.equal(nextDueDate(g, '2026-01-02'), null);
+  assert.equal(needsCheckin(g, '2026-01-02'), false);
+  assert.equal(checkinSummary([g], '2026-01-02').open, 0);
+  assert.equal(nextActionText(g, '2026-01-02').kind, 'wait');
+});
+
+test('a very slow pace caps the projection and the day map stays small', () => {
+  const g = planGoal([{ action: 'Pages', amount: 1000, per: 'day', unit: 'pages', key: 0 }],
+    { '2026-01-01': { 0: 1 } }, { targetDays: 365 });
+  const p = smartProgress(g, '2026-01-02');
+  assert.ok(p.projected.days <= 2 + MAX_PROJECTED_DAYS);
+  assert.ok(p.days.length <= 2 + MAX_PROJECTED_DAYS);
+});
+
+test('words the user typed on purpose are not re-cased', () => {
+  assert.equal(titleCase('iPhone routine'), 'iPhone Routine');
+  assert.equal(titleCase('check ajay.reddy@gmail.com'), 'Check ajay.reddy@gmail.com');
+  assert.equal(titleCase('see https://github.com/user/repo'), 'See https://github.com/user/repo');
+  assert.equal(titleCase('save for USA trip'), 'Save for USA Trip');
+  assert.equal(titleCase('done. in the morning'), 'Done. In the Morning');
+});
+
+test('a total divided over the goal still adds up to what was typed', () => {
+  const per = perPeriodAmount('10', 3, 'day', 'hr', '2026-01-01');
+  const g = planGoal([{ action: 'Study', amount: per, per: 'day', unit: 'hr', key: 0 }],
+    { '2026-01-01': { 0: 3.33 }, '2026-01-02': { 0: 3.33 }, '2026-01-03': { 0: 3.33 } }, { targetDays: 3, attemptStart: '2026-01-01' });
+  const p = smartProgress(g, '2026-01-03');
+  assert.ok(Math.abs(p.items[0].total - 10) < 0.01);
+  assert.equal(p.items[0].complete, true);
+});
+
+test('a miss on an old day restarts the attempt from today, not from the past', () => {
+  const g = { id: 'h', type: 'sankalpa', status: 'active', title: 'Vow', targetDays: 10, attempt: 1, history: [], logs: {},
+    attemptStart: '2026-01-01', checkins: { '2026-01-01': 'done' } };
+  const res = applyCheckin(g, '2026-01-02', 'no', new Date('2026-01-10T09:00:00'));
+  assert.equal(res.outcome, 'failed');
+  assert.equal(res.patch.attemptStart, '2026-01-10');
 });
