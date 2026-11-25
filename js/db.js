@@ -84,6 +84,19 @@ export function subscribeGoals(uid, onData, onError) {
   );
 }
 
+// Rewards are kept on the user's own profile document, so the existing rules already cover them.
+export function subscribeRewards(uid, onData, onError) {
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => onData(Array.isArray(snap.data()?.rewards) ? snap.data().rewards : []),
+    onError,
+  );
+}
+
+export async function saveRewards(uid, rewards) {
+  await setDoc(doc(db, 'users', uid), { rewards, rewardsUpdatedAt: new Date().toISOString() }, { merge: true });
+}
+
 export async function createGoal(uid, data) {
   const ref = doc(goalsCol(uid));
   await setDoc(ref, data);
@@ -181,4 +194,19 @@ export async function resetAccount(uid) {
   const count = await deleteAllGoals(uid);
   await deleteDoc(doc(db, 'users', uid));
   return count;
+}
+
+// Read every journey with its document reference, and write many changes in batches of 400.
+// The localhost-only reset tool (js/local-tools.js, not in GitHub) uses these.
+export async function allGoalDocs(uid) {
+  const snap = await getDocs(goalsCol(uid));
+  return snap.docs.map((d) => ({ ref: d.ref, id: d.id, data: d.data() }));
+}
+
+export async function commitWrites(writes) {
+  for (let i = 0; i < writes.length; i += 400) {
+    const batch = writeBatch(db);
+    writes.slice(i, i + 400).forEach((w) => (w.delete ? batch.delete(w.ref) : batch.update(w.ref, w.patch)));
+    await batch.commit();
+  }
 }

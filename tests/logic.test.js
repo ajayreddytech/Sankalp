@@ -6,7 +6,7 @@ import {
   suggestIcon, redoData, redoDefaults, exceptionAvailability, cleanPlan, resolveSmartEnd, smartProgress, titleCase,
   smartBrief, checkinCounts, inCheckinGroup, nextDueDate, isOverdue, applyDelete, deletedGroups, accomplishedGroups, applySmartLog, smartPhase, sortByOrder, nextOrder, optionalText, nextActionText, checkinSummary, cleanSankalpaDays,
   cleanSmart, checkinDay, dayNumber, periodLabel, perPeriodAmount, isNextMorning, startInfo,
-  PERIOD_OPTIONS, PERIOD_SHORT, planUnit, dayTargetOf, countsOn, needsCheckin, MAX_PROJECTED_DAYS,
+  PERIOD_OPTIONS, PERIOD_SHORT, planUnit, dayTargetOf, countsOn, needsCheckin, MAX_PROJECTED_DAYS, restartPatch,
 } from '../js/logic.js';
 
 const WHY = 'It makes me feel steady';
@@ -910,4 +910,18 @@ test('a miss on an old day restarts the attempt from today, not from the past', 
   const res = applyCheckin(g, '2026-01-02', 'no', new Date('2026-01-10T09:00:00'));
   assert.equal(res.outcome, 'failed');
   assert.equal(res.patch.attemptStart, '2026-01-10');
+});
+
+test('restarting an active journey clears its progress and starts on the new date', () => {
+  const g = { id: 'x', type: 'smart', status: 'active', title: 'Plan', targetDays: 10, attempt: 3, attemptStart: '2026-11-01',
+    history: [{ outcome: 'failed' }], checkins: { '2026-11-01': 'done' }, logs: { '2026-11-01': { 0: 4 } },
+    smart: { plan: [{ action: 'Read', amount: 1, per: 'day', key: 0 }], endDate: '2026-11-10', notes: false } };
+  const p = restartPatch(g, '2026-11-24', new Date('2026-11-23T20:00:00'));
+  assert.equal(p.attempt, 1);
+  assert.equal(p.attemptStart, '2026-11-24');
+  assert.deepEqual(p.checkins, {});
+  assert.deepEqual(p.logs, {});
+  assert.deepEqual(p.history, []);
+  assert.equal(p.smart.endDate, '2026-12-03');
+  assert.equal(p.smart.plan.length, 1);
 });

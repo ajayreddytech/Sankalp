@@ -1139,3 +1139,118 @@ export function deletedGroups(goals) {
     .map((g) => ({ goalId: g.id, title: g.title, type: g.type, when: String(g.deletedAt || '').slice(0, 10) }));
   return groupRows(rows, (r) => `${r.type}|${titleKey(r.title)}`);
 }
+
+/**
+ * A fresh start for an active journey: same title, reason, length and settings, but no check-ins, numbers
+ * or past runs, beginning on startDate. A SMART goal's deadline moves to keep its length.
+ */
+export function restartPatch(goal, startDate, now = new Date()) {
+  const iso = now.toISOString();
+  const patch = {
+    attempt: 1,
+    attemptStart: normalizeDate(startDate, 'Pick a valid start date.'),
+    checkins: {},
+    logs: {},
+    history: [],
+    completedAt: null,
+    updatedAt: iso,
+  };
+  if (goal.type === 'smart' && goal.smart) {
+    patch.smart = { ...goal.smart, endDate: addDays(patch.attemptStart, goal.targetDays - 1) };
+  }
+  return patch;
+}
+
+// ---------- rewards ----------
+// A reward is a prize you pick for yourself. It has journeys attached. Its progress is how many of those
+// journeys are accomplished, and it can be claimed once every attached journey is accomplished.
+
+export const MAX_REWARD_TITLE = 60;
+export const MAX_REWARD_NOTE = 200;
+export const MAX_REWARD_ITEMS = 10;          // gifts packed into one reward
+export const MAX_REWARD_ITEM_TITLE = 60;
+
+/** Checks and tidies a reward typed in the form. Throws a message the user can read. */
+export function cleanReward(input = {}) {
+  const title = String(input.title ?? '').trim();
+  if (!title) throw new Error('Give the reward a name.');
+  if (title.length > MAX_REWARD_TITLE) throw new Error(`Reward name must be ${MAX_REWARD_TITLE} characters or fewer.`);
+  const items = [...new Set((input.items || []).map((x) => titleCase(String(x).trim())).filter(Boolean))];
+  if (items.length > MAX_REWARD_ITEMS) throw new Error(`A package holds up to ${MAX_REWARD_ITEMS} gifts.`);
+  if (items.some((x) => x.length > MAX_REWARD_ITEM_TITLE)) throw new Error(`Each gift must be ${MAX_REWARD_ITEM_TITLE} characters or fewer.`);
+  const goalIds = [...new Set((input.goalIds || []).map(String).filter(Boolean))];
+  return { title, note: optionalText(input.note, MAX_REWARD_NOTE), goalIds, items };
+}
+
+/**
+ * How far one journey has got, from 0 to 1. An accomplished journey is 1. Otherwise: a habit or sankalpa is its
+ * days done out of its target days, and a SMART goal is its plan's progress. A journey that is abandoned or deleted
+ * stays where it was, and it cannot be accomplished.
+ */
+export function journeyFraction(goal, today = todayStr()) {
+  if (!goal) return 0;
+  if (goal.status === 'completed') return 1;
+  if (goal.status !== 'active') return 0;
+  if (goal.type === 'smart') return Math.min(1, smartProgress(goal, today).ratio || 0);
+  return goal.targetDays ? Math.min(1, doneCount(goal) / goal.targetDays) : 0;
+}
+
+/**
+ * Progress of one reward against the journeys on record. Its bar is the average progress of its journeys, each one
+ * moving as the journey moves day by day. It is ready to open only when every journey is accomplished.
+ * A journey that is no longer on record counts as 0.
+ */
+export function rewardProgress(reward, goals = [], today = todayStr()) {
+  const byId = new Map(goals.map((g) => [g.id, g]));
+  const journeys = (reward.goalIds || []).map((id) => {
+    const goal = byId.get(id) || null;
+    const fraction = journeyFraction(goal, today);
+    return { id, goal, done: goal?.status === 'completed', fraction, pct: Math.round(fraction * 100) };
+  });
+  const total = journeys.length;
+  const done = journeys.filter((j) => j.done).length;
+  const avg = total ? journeys.reduce((n, j) => n + j.fraction, 0) / total : 0;
+  return {
+    total,
+    done,
+    pct: Math.round(avg * 100),
+    ready: total > 0 && done === total && !reward.claimedAt,
+    journeys,
+  };
+}
+
+/**
+ * The last day a journey can run. A habit or sankalpa ends on its last day of cells (its target days, plus any
+ * exception days taken). A SMART goal ends on its deadline.
+ */
+export function journeyDeadline(goal) {
+  if (!goal) return null;
+  if (goal.type === 'smart' && goal.smart?.endDate) return goal.smart.endDate;
+  if (!goal.attemptStart) return null;
+  return addDays(goal.attemptStart, Math.max(0, totalCells(goal) - 1));
+}
+
+/** The latest journey deadline among the given journeys: the earliest a reward can be due. */
+export function latestJourneyDeadline(goalIds = [], goals = []) {
+  const byId = new Map(goals.map((g) => [g.id, g]));
+  const days = goalIds.map((id) => journeyDeadline(byId.get(id))).filter(Boolean);
+  return days.length ? days.sort().at(-1) : null;
+}
+
+/**
+ * The deadline a reward is saved with. Blank means the last journey's end. A deadline can't be before that,
+ * since the reward could never be opened in time.
+ */
+export function cleanDeadline(value, goalIds = [], goals = []) {
+  const last = latestJourneyDeadline(goalIds, goals);
+  const d = String(value ?? '').trim() || last;
+  if (!d) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('Pick a valid deadline date.');
+  if (last && d < last) throw new Error(`The deadline can't be before ${last}, when the last journey ends.`);
+  return d;
+}
+
+/** Journeys that can be attached to a reward: the ones in progress, and the ones already accomplished. */
+export function rewardChoices(goals = []) {
+  return goals.filter((g) => g.status === 'active' || g.status === 'completed');
+}

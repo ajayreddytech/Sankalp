@@ -7,3 +7,6 @@ Thumbs.db
 # Firebase admin (service account) keys: never commit
 *-firebase-adminsdk-*.json
 *serviceAccount*.json
+
+# Localhost-only tools (reset journeys for testing): never pushed
+js/local-tools.js

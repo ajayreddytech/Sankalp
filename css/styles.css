@@ -1328,3 +1328,298 @@ input, textarea, select, option { text-transform: none; }
 .due-row.smart-due .due-title small, .type-col .due-row.smart-due .due-title small { display: block; text-align: center; }
 .due-row.smart-due .goal-icon.sm, .type-col .due-row.smart-due .goal-icon.sm { margin: 0 auto; }
 .md-toggle[hidden] { display: none; }
+/* ==========================================================================
+   v9: phones show one "All journeys" button in the bottom bar (its panel lists
+   every journey and scrolls), Accomplishments never wider than the screen, and Rewards.
+   ========================================================================== */
+
+/* Accomplishments only: the title is one long word, so on a phone it is sized to fit,
+   and nothing on this page can push it wider than the screen (that made phones zoom out). */
+@media (max-width: 720px) {
+  .acc-page h1.page-title { font-size: clamp(30px, 9vw, 40px); overflow-wrap: anywhere; }
+}
+.acc-page { max-width: 100%; overflow-x: clip; }
+@media (max-width: 899px) {
+  .acc-page .type-cols { grid-template-columns: minmax(0, 1fr); }
+}
+.acc-page .rec-side { flex-wrap: wrap; }
+.acc-page .rec-status { white-space: normal; }
+
+/* "All journeys": a single button in the phone bar. Desktop keeps its side list. */
+.rail-all, .rail-sheet { display: none; }
+@media (max-width: 720px) {
+  .rail > .rail-goals { display: none; }
+  .rail > .rail-all { display: grid; }
+  .rail-sheet {
+    display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px;
+    position: absolute; left: 50%; bottom: calc(100% + 12px); transform: translateX(-50%);
+    width: min(340px, calc(100vw - 32px)); max-height: min(60vh, 480px); padding: 12px;
+    border-radius: 24px; background: rgba(17, 17, 26, 0.96); border: 1px solid var(--line-strong);
+    box-shadow: 0 -20px 50px -18px rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
+    animation: rail-sheet-in 0.3s var(--ease) both;
+  }
+  .rail-sheet-head { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 2px 6px 0; }
+  .rail-sheet-goals {
+    display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-height: 0; margin: 0; padding: 0 0 2px;
+    overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+    scroll-snap-type: none; scrollbar-width: thin;
+  }
+  .rail-sheet-goals > a {
+    width: 100%; height: auto; min-height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-start;
+    gap: 12px; padding: 8px 12px; border-radius: 16px;
+  }
+  .rail-sheet-goals > a svg, .rail-sheet-goals > a i { width: 20px; height: 20px; flex-shrink: 0; }
+  .rail-sheet-goals > a span { font-size: 15px; font-weight: 600; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+  .rail-sheet-goals > a.active::before { display: none; }
+  .rail-sheet-goals > a.active { box-shadow: inset 0 0 0 1px var(--c); }
+}
+@keyframes rail-sheet-in { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* Rewards: each reward has its own colours, icon, sparkles and animation (set in app.js by --from, --to, --spark). */
+.rewards-body { text-align: center; }
+.rewards-body.enter .reward-card, .rewards-body.enter .reward-done {
+  animation: reward-in 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms);
+}
+@keyframes reward-in { from { opacity: 0; transform: translateY(18px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes gift-bob { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-6px) rotate(3deg); } }
+@keyframes gift-open {
+  0% { transform: scale(1); } 40% { transform: scale(1.25) rotate(-8deg); } 100% { transform: scale(0.2) rotate(20deg); opacity: 0; }
+}
+@keyframes glow-pulse { 0%, 100% { opacity: 0.45; transform: scale(0.92); } 50% { opacity: 1; transform: scale(1.08); } }
+@keyframes shine { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(100%); } }
+@keyframes claim-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--from, #34d399) 55%, transparent); }
+  50% { box-shadow: 0 0 0 10px transparent; }
+}
+@keyframes burst-fly {
+  0% { transform: translate(0, 0) rotate(0); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) rotate(var(--r)); opacity: 0; }
+}
+@keyframes spark-twinkle {
+  0%, 100% { opacity: 0; transform: scale(0.3) rotate(0deg); } 50% { opacity: 1; transform: scale(1) rotate(45deg); }
+}
+
+/* the five animations of the gift icon: one per reward */
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+@keyframes orb-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+@keyframes orb-wobble { 0%, 100% { transform: rotate(-9deg); } 50% { transform: rotate(9deg); } }
+@keyframes orb-hop { 0%, 100% { transform: translateY(0) scaleY(1); } 45% { transform: translateY(-14px) scaleY(1.05); } 60% { transform: translateY(-14px) scaleY(1); } 80% { transform: translateY(0) scaleY(0.92); } }
+@keyframes orb-swing { 0%, 100% { transform: rotate(-14deg); } 50% { transform: rotate(14deg); } }
+@keyframes orb-flip { to { transform: rotateY(360deg); } }
+
+.reward-hero { display: grid; justify-items: center; gap: 10px; margin-bottom: 18px; }
+.reward-hero-orb, .reward-empty-orb {
+  width: 72px; height: 72px; border-radius: 26px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #06060e;
+  box-shadow: 0 18px 40px -12px rgba(139, 92, 246, 0.7); animation: gift-bob 3.2s ease-in-out infinite;
+}
+.reward-hero-orb svg, .reward-hero-orb i, .reward-empty-orb svg, .reward-empty-orb i { width: 34px; height: 34px; }
+.reward-hero-sub { font-size: 14px; color: var(--muted); max-width: 40ch; line-height: 1.5; }
+
+.reward-list { display: grid; gap: 14px; }
+.reward-card {
+  position: relative; display: grid; justify-items: center; gap: 10px; padding: 22px 18px 16px; border-radius: 26px;
+  overflow: hidden; text-align: center;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--from) 16%, transparent), rgba(255, 255, 255, 0.02) 60%), var(--surface);
+  border: 1px solid var(--line); transition: transform 0.3s var(--ease), border-color 0.3s, box-shadow 0.3s;
+}
+.reward-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--from) 55%, transparent); }
+.reward-card.ready {
+  border-color: color-mix(in srgb, var(--from) 70%, transparent);
+  box-shadow: 0 20px 50px -20px color-mix(in srgb, var(--from) 80%, transparent);
+}
+.reward-stage { position: relative; width: 96px; height: 96px; display: grid; place-items: center; }
+.reward-glow {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--from) 60%, transparent), transparent 70%);
+  animation: glow-pulse 2.8s ease-in-out infinite;
+}
+.reward-spark {
+  position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; background: var(--spark);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  filter: drop-shadow(0 0 4px var(--spark)); opacity: 0; animation: spark-twinkle 2.4s ease-in-out infinite;
+}
+.reward-orb {
+  position: relative; width: 66px; height: 66px; border-radius: 22px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--from), var(--to)); color: #06060e;
+  box-shadow: 0 14px 30px -10px color-mix(in srgb, var(--from) 80%, transparent);
+}
+.reward-orb svg, .reward-orb i { width: 32px; height: 32px; }
+.reward-orb.anim-bob { animation: gift-bob 3.2s ease-in-out infinite; }
+.reward-orb.anim-spin { animation: orb-spin 9s linear infinite; }
+.reward-orb.anim-pulse { animation: orb-pulse 2.2s ease-in-out infinite; }
+.reward-orb.anim-wobble { animation: orb-wobble 2.6s ease-in-out infinite; }
+.reward-orb.anim-hop { animation: orb-hop 1.8s ease-in-out infinite; }
+.reward-orb.anim-swing { transform-origin: 50% 0; animation: orb-swing 2.4s ease-in-out infinite; }
+.reward-orb.anim-flip { animation: orb-flip 3.6s linear infinite; }
+.reward-card.opening .reward-orb { animation: gift-open 0.7s var(--ease) both; }
+.reward-title { font-size: 20px; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
+.reward-note { font-size: 13.5px; color: var(--muted); max-width: 36ch; overflow-wrap: anywhere; }
+.reward-progress { width: 100%; display: grid; gap: 8px; justify-items: center; }
+.reward-bar { width: 100%; height: 10px; border-radius: 99px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.reward-bar span {
+  position: relative; display: block; height: 100%; border-radius: 99px; overflow: hidden;
+  background: linear-gradient(90deg, var(--from), var(--to)); transition: width 0.9s var(--ease);
+}
+.reward-bar span::after {
+  content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.55) 50%, transparent 70%);
+  transform: translateX(-100%); animation: shine 2.4s ease-in-out infinite;
+}
+.reward-count { font-size: 13px; color: var(--muted); }
+.reward-card.ready .reward-count { color: #6ee7b7; font-weight: 700; }
+.reward-more {
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 99px;
+  border: 1px solid var(--line-strong); background: rgba(255, 255, 255, 0.04); color: var(--from);
+  font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; transition: background 0.2s;
+}
+.reward-more:hover { background: rgba(255, 255, 255, 0.09); }
+.reward-more svg, .reward-more i { width: 16px; height: 16px; transition: transform 0.35s var(--ease); }
+.reward-more.open svg, .reward-more.open i { transform: rotate(180deg); }
+.reward-drawer { display: grid; grid-template-rows: 0fr; width: 100%; transition: grid-template-rows 0.45s var(--ease); }
+.reward-drawer.open { grid-template-rows: 1fr; }
+.reward-drawer-inner { min-height: 0; overflow: hidden; }
+.reward-journeys { list-style: none; display: grid; gap: 8px; margin: 4px 0 0; padding: 0; width: 100%; }
+.reward-journeys li {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 10px; padding: 10px 12px;
+  border-radius: 16px; background: #0b0b13; border: 1px solid var(--line); font-size: 14px; color: var(--muted);
+}
+.reward-journeys li svg, .reward-journeys li i { width: 16px; height: 16px; flex-shrink: 0; color: var(--muted); }
+.reward-journeys li.done { color: var(--text); border-color: color-mix(in srgb, var(--from) 45%, transparent); }
+.reward-journeys li.done svg, .reward-journeys li.done i { color: var(--to); }
+.reward-journeys li span { overflow-wrap: anywhere; }
+.reward-journeys li small { font-size: 12px; width: 100%; }
+.reward-foot { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; margin-top: 4px; }
+.reward-claim {
+  flex: 1 1 100%; position: relative; overflow: hidden; animation: claim-pulse 1.8s ease-in-out infinite;
+  background: linear-gradient(135deg, var(--from), var(--to)); color: #06060e;
+}
+.reward-claim::after {
+  content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.6) 50%, transparent 70%);
+  transform: translateX(-100%); animation: shine 2.2s ease-in-out infinite;
+}
+.reward-empty {
+  display: grid; justify-items: center; gap: 10px; padding: 34px 20px; border-radius: 26px; border: 1px dashed var(--line-strong);
+}
+.reward-empty h3 { font-size: 20px; font-weight: 750; }
+.reward-empty p { font-size: 14px; max-width: 38ch; line-height: 1.5; }
+
+.reward-claimed { margin-top: 30px; display: grid; gap: 10px; }
+.reward-claimed-title { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 700; color: #c4b5fd; }
+.reward-claimed-title svg, .reward-claimed-title i { width: 18px; height: 18px; }
+.reward-done {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 12px 14px;
+  border-radius: 18px; background: var(--surface); border: 1px solid var(--line); text-align: left;
+}
+.reward-done > svg, .reward-done > i { width: 20px; height: 20px; color: var(--green); }
+.reward-done-title { font-weight: 650; overflow-wrap: anywhere; min-width: 0; }
+.reward-done small { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.reward-del { width: 36px; height: 36px; border-radius: 12px; }
+
+/* the reward form */
+.reward-picks { display: grid; gap: 8px; text-align: left; }
+.reward-pick {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: center; margin: 0; padding: 12px 14px;
+  border-radius: 16px; background: #0b0b13; border: 1px solid var(--line-strong); cursor: pointer;
+}
+.reward-pick input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+.reward-pick span { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 15px; color: var(--text); overflow-wrap: anywhere; }
+.reward-pick span svg, .reward-pick span i { width: 17px; height: 17px; flex-shrink: 0; color: #c4b5fd; }
+.reward-pick small { grid-column: 2; font-size: 12px; }
+.reward-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.reward-actions .btn { min-width: 120px; }
+
+/* the confetti burst over the panel */
+.reward-burst { position: fixed; left: 50%; top: 42%; width: 0; height: 0; z-index: 130; pointer-events: none; }
+.reward-burst span {
+  position: absolute; left: -4px; top: -6px; width: 8px; height: 12px; border-radius: 2px; background: var(--c);
+  animation: burst-fly 1.5s cubic-bezier(0.2, 0.7, 0.3, 1) var(--delay, 0s) both;
+}
+
+/* the look choices in the reward form: icon, movement and colour, with a live preview */
+.look-preview {
+  display: grid; justify-items: center; gap: 4px; margin: 0 0 16px; padding: 12px 10px 10px; border-radius: 22px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--from) 18%, transparent), rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--line);
+}
+.look-preview .reward-stage { transform: scale(0.85); }
+.look-preview-name { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.look-section { display: grid; gap: 8px; margin: 0 0 18px; }
+.look-title { font-size: 13px; color: var(--muted); font-weight: 600; }
+.look-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.look-opt { position: relative; cursor: pointer; }
+.look-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.look-opt > span {
+  display: grid; justify-items: center; gap: 4px; min-width: 60px; padding: 9px 8px; border-radius: 16px;
+  background: #0b0b13; border: 1px solid var(--line-strong); color: var(--muted);
+  transition: border-color 0.2s, box-shadow 0.2s, color 0.2s, transform 0.2s;
+}
+.look-opt > span svg, .look-opt > span i { width: 22px; height: 22px; }
+.look-opt small { font-size: 10.5px; }
+.look-opt:hover > span { transform: translateY(-1px); color: var(--text); }
+.look-opt input:checked + span { color: var(--text); border-color: var(--accent-2); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-2) 35%, transparent); }
+.look-opt input:focus-visible + span { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.look-chip > span { min-width: 0; padding: 8px 14px; border-radius: 99px; font-size: 13px; font-weight: 650; }
+.look-swatch > span {
+  width: 40px; height: 40px; min-width: 0; padding: 0; border-radius: 50%; border: 2px solid transparent;
+  background: linear-gradient(135deg, var(--from), var(--to));
+}
+.look-swatch input:checked + span { border-color: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--from) 60%, transparent); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+
+/* Rewards: the due date, with days left, and a red state once the deadline has passed */
+.reward-due { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.reward-due.late { color: #fda4af; font-weight: 700; }
+.reward-card.late { border-color: rgba(251, 113, 133, 0.5); }
+
+/* Login screen only (phones and desktop): no bottom bar is shown here, so the card sits in the true centre
+   and the page is exactly one screen tall, with no scrolling. Other screens are not affected. */
+#rail[hidden] + .view:has(> .login) { padding: 0; }
+.login { min-height: 100dvh; box-sizing: border-box; padding: max(24px, var(--safe-top)) 16px max(24px, var(--safe-bottom)); }
+
+/* Account menu and Rewards panel: every word starts with a capital letter. Buttons do not take the page's text case by default, so they are set here. Typing boxes are not changed. */
+.menu-item, .rewards-body, .rewards-body button, .rewards-body .reward-pick span { text-transform: capitalize; }
+
+/* Rewards: the gifts in a package, stacked one over another like a deck of cards */
+.reward-stack { width: 100%; display: grid; gap: 8px; justify-items: center; }
+.reward-stack-count { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.stack-deck { position: relative; width: min(100%, 300px); }
+.stack-item {
+  position: absolute; left: 0; right: 0; top: calc(var(--n) * 26px); height: 44px; z-index: calc(var(--n) + 1);
+  display: flex; align-items: center; gap: 10px; padding: 0 14px; border-radius: 14px; text-align: left;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--from) 24%, #14141f), #14141f);
+  border: 1px solid color-mix(in srgb, var(--from) 45%, transparent); box-shadow: 0 8px 18px -10px rgba(0, 0, 0, 0.8);
+}
+.stack-item i, .stack-item svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--from); }
+.stack-item span { min-width: 0; font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the package field in the reward form */
+.pkg-add { display: flex; gap: 8px; align-items: center; }
+.pkg-add input { flex: 1 1 auto; min-width: 0; }
+.pkg-list { display: grid; gap: 8px; }
+.pkg-list:empty { display: none; }
+.pkg-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 14px; border-radius: 14px;
+  background: #0b0b13; border: 1px solid var(--line-strong); text-align: left;
+}
+.pkg-row span { flex: 1; min-width: 0; font-size: 15px; overflow-wrap: anywhere; }
+.pkg-remove { width: 34px; height: 34px; border-radius: 12px; }
+.pkg-remove svg, .pkg-remove i { width: 16px; height: 16px; }
+
+/* the icon, animation and colour drop-downs in the reward form */
+.look-section { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
+.look-section .look-field { margin: 0; }
+.look-section select { width: 100%; min-width: 0; }
+@media (max-width: 520px) { .look-section { grid-template-columns: 1fr; } }
+
+/* pastel gifts that glow on the dark background */
+.reward-orb {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 0 34px -2px color-mix(in srgb, var(--from) 75%, transparent), 0 14px 30px -12px color-mix(in srgb, var(--from) 80%, transparent);
+}
+.reward-glow { background: radial-gradient(circle, color-mix(in srgb, var(--from) 70%, transparent), transparent 70%); }
+.reward-spark { filter: drop-shadow(0 0 6px var(--spark)) drop-shadow(0 0 2px #fff); }
+
+/* the gifts in a package: plain text, one above the other */
+.reward-stack { width: 100%; display: grid; gap: 4px; justify-items: center; }
+.stack-text { font-size: 15px; font-weight: 650; color: var(--text); overflow-wrap: anywhere; }

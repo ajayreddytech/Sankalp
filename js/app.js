@@ -4,6 +4,12 @@ import * as L from './logic.js';
 import { ICON_GROUPS, COLOURS, DEFAULT_COLOUR } from './choices.js';
 import { renderMarkdown } from './markdown.js';
 
+// Localhost-only tools (never pushed to GitHub): loaded only when the app runs on this computer.
+let localTools = null;
+if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+  import('./local-tools.js').then((m) => { localTools = m; }).catch(() => {});
+}
+
 // What each kind of journey means, shown under its column so the three are easy to tell apart.
 const TYPE_PLURAL = { habit: 'Habits', sankalpa: 'Sankalpas', smart: 'SMART Goals' };
 const TYPE_ICON = { habit: 'repeat', sankalpa: 'scroll', smart: 'target' };
@@ -29,7 +35,10 @@ const state = {
   drafts: {},        // unsaved SMART numbers, keyed "goalId|planIndex|date", kept across re-renders
   loginError: '',
   openType: null,    // which type column (habit, sankalpa, smart) is open on Check In or Your Journeys
+  rewards: [],       // the user's rewards, with the journeys attached to each
+  railAll: false,    // phones: the "All journeys" panel above the bottom bar is open
 };
+let unsubscribeRewards = null;
 let unsubscribeGoals = null;
 
 const $ = (sel) => document.querySelector(sel);
@@ -567,17 +576,44 @@ function renderRail() {
        data-tip="${esc(g.title)}" style="--c:${colour(g.color)}" aria-label="${esc(g.title)}">
       ${icon(g.icon)}
     </a>`).join('');
+  // Phones: the full list opens in a panel above the bar, with each journey's name, so it can scroll.
+  const allRows = active.map((g) => `
+    <a class="${cls('goal', g.id)} goal-item rail-drag" data-id="${esc(g.id)}" href="#/goal/${encodeURIComponent(g.id)}"
+       style="--c:${colour(g.color)}" aria-label="${esc(g.title)}">
+      ${icon(g.icon)}<span>${esc(g.title)}</span>
+    </a>`).join('');
+  const panel = state.railAll ? `
+    <div class="rail-sheet" id="rail-sheet">
+      <p class="rail-sheet-head">All journeys</p>
+      <div class="rail-goals rail-sheet-goals">${allRows}</div>
+    </div>` : '';
   // Keep the phone bar's scroll position: rebuilding the rail would otherwise jump it back to the start.
   const keepX = $('#rail .rail-goals')?.scrollLeft ?? 0;
+  const keepY = $('#rail .rail-sheet-goals')?.scrollTop ?? 0;
   $('#rail').innerHTML = `
     <a class="${cls('home')}" href="#/home" data-tip="Check in" aria-label="Check in">${icon('calendar-check')}</a>
     <a class="${cls('journeys')}" href="#/journeys" data-tip="Your journeys" aria-label="Your journeys">${icon('route')}</a>
+    <button class="rail-item rail-all${state.railAll ? ' active' : ''}" data-action="all-journeys" data-tip="All journeys"
+      aria-label="All journeys" aria-expanded="${state.railAll}" aria-controls="rail-sheet">${icon('layers')}</button>
     <div class="rail-goals">${goalItems}</div>
     <div class="rail-spacer"></div>
     <a class="${cls('accomplishments')}" href="#/accomplishments" data-tip="Accomplishments" aria-label="Accomplishments">${icon('medal')}</a>
-    <button class="rail-item" data-action="account" data-tip="Account" aria-label="Account">${icon('circle-user-round')}</button>`;
+    <button class="rail-item" data-action="account" data-tip="Account" aria-label="Account">${icon('circle-user-round')}</button>
+    ${panel}`;
   const strip = $('#rail .rail-goals');
   if (strip) strip.scrollLeft = keepX;
+  const list = $('#rail .rail-sheet-goals');
+  if (list) list.scrollTop = keepY;
+}
+
+// Closes the phone's "All journeys" panel without rebuilding the page.
+function closeAllJourneys() {
+  if (!state.railAll) return;
+  state.railAll = false;
+  $('#rail .rail-sheet')?.remove();
+  const btn = $('#rail .rail-all');
+  btn?.classList.remove('active');
+  btn?.setAttribute('aria-expanded', 'false');
 }
 
 // ---------- views ----------
@@ -1228,7 +1264,7 @@ function viewAccomplishments() {
       : emptyBlock('sparkles', 'No misses on record', 'Every journey you have started is still on track or accomplished.');
   }
   return `
-    <div class="page-in-target">
+    <div class="page-in-target acc-page">
       <header class="hero">
         <p class="eyebrow">Your record</p>
         <h1 class="page-title">Accomplishments</h1>
@@ -1786,11 +1822,482 @@ function openAccount() {
         <div><strong>${esc(u.displayName || 'Signed in')}</strong><small class="muted">${esc(u.email || '')}</small></div>
       </div>
       <div class="menu">
+        <button class="menu-item" data-action="rewards">${icon('gift')}<div><strong>Rewards</strong><small class="muted">Choose a reward, attach the journeys that earn it, and claim it when they are done</small></div></button>
+        ${localTools?.resetMenuHTML() ?? ''}
         <button class="menu-item" data-action="export">${icon('download')}<div><strong>Export my data</strong><small class="muted">Download everything as a JSON backup</small></div></button>
         <button class="menu-item danger-text" data-action="reset-account">${icon('rotate-ccw')}<div><strong>Reset account</strong><small class="muted">Deletes every journey and all your data. Your sign-in stays.</small></div></button>
         <button class="menu-item danger-text" data-action="signout">${icon('log-out')}<div><strong>Sign out</strong><small class="muted">Your data stays safe in the cloud</small></div></button>
       </div>`,
   });
+}
+
+// ---------- rewards: a prize, the journeys that earn it, and a claim once they are all accomplished ----------
+
+// The open Rewards panel: its element, and whether it shows the list or the form for one reward.
+const rewardUI = { wrap: null, mode: 'list', editId: null, expanded: new Set() };
+
+function openRewards() {
+  rewardUI.mode = 'list';
+  rewardUI.editId = null;
+  openModal({
+    title: 'Rewards',
+    wide: true,
+    body: '<div class="rewards-body"></div>',
+    onMount: (wrap) => {
+      rewardUI.wrap = wrap;
+      wrap.addEventListener('click', onRewardsClick);
+      wrap.addEventListener('submit', onRewardsSubmit);
+      wrap.addEventListener('change', onRewardsChange);
+      // Enter in the gift box adds the gift, rather than saving the whole reward.
+      wrap.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.target.matches('[data-pkg-draft]')) {
+          e.preventDefault();
+          addPackageItem(e.target.closest('form'));
+        }
+      });
+      paintRewards({ force: true });
+    },
+    onClose: () => { rewardUI.wrap = null; },
+  });
+}
+
+// Redraws the open panel. The form is left alone while it is open, so what is typed is never lost.
+function paintRewards({ force = false } = {}) {
+  const body = rewardUI.wrap?.querySelector('.rewards-body');
+  if (!body || (!force && rewardUI.mode === 'form')) return;
+  body.innerHTML = rewardUI.mode === 'form' ? rewardFormHTML() : rewardsListHTML();
+  // The entrance animation plays only after a deliberate change (opening, saving, claiming), not on each refresh.
+  body.classList.toggle('enter', force);
+  refreshIcons();
+}
+
+function rewardsListHTML() {
+  const open = state.rewards.filter((r) => !r.claimedAt);
+  const claimed = state.rewards
+    .filter((r) => r.claimedAt)
+    .sort((a, b) => String(b.claimedAt).localeCompare(String(a.claimedAt)));
+  const claimedRows = claimed.map((r, i) => `
+    <div class="reward-done" style="--i:${i}">
+      ${icon('package-open')}
+      <span class="reward-done-title">${esc(r.title)}</span>
+      <small>${esc(fmtDate(String(r.claimedAt).slice(0, 10)))}</small>
+      <button class="icon-btn reward-del" data-action="rw-delete" data-id="${esc(r.id)}" aria-label="Delete ${esc(r.title)}">${icon('trash-2')}</button>
+    </div>`).join('');
+  return `
+    <header class="reward-hero">
+      <p class="reward-hero-sub">Pick a treat for yourself, attach the journeys that earn it, and open it when they are all done.</p>
+      <button class="btn primary reward-new" data-action="rw-new">${icon('plus')}New reward</button>
+    </header>
+    ${open.length
+      ? `<div class="reward-list">${open.map((r, i) => rewardCardHTML(r, i)).join('')}</div>`
+      : `<div class="reward-empty">
+          <div class="reward-empty-orb">${icon('gift')}</div>
+          <h3>No rewards yet</h3>
+          <p class="muted">Add a reward, and it will show how close you are to opening it.</p>
+        </div>`}
+    ${claimed.length ? `<section class="reward-claimed"><h3 class="reward-claimed-title">${icon('package-open')}Opened rewards</h3>${claimedRows}</section>` : ''}`;
+}
+
+// A reward's look is three choices: its icon, how it moves, and its colours. Each reward saves its own choices.
+const REWARD_ICONS = [
+  { key: 'gift', icon: 'gift', label: 'Gift' },
+  { key: 'box', icon: 'package', label: 'Box' },
+  { key: 'crown', icon: 'crown', label: 'Crown' },
+  { key: 'award', icon: 'award', label: 'Award' },
+  { key: 'trophy', icon: 'trophy', label: 'Trophy' },
+  { key: 'medal', icon: 'medal', label: 'Medal' },
+  { key: 'ticket', icon: 'ticket', label: 'Ticket' },
+  { key: 'party', icon: 'party-popper', label: 'Prize' },
+];
+const REWARD_ANIMS = [
+  { key: 'bob', cls: 'anim-bob', label: 'Bob' },
+  { key: 'spin', cls: 'anim-spin', label: 'Spin' },
+  { key: 'pulse', cls: 'anim-pulse', label: 'Pulse' },
+  { key: 'wobble', cls: 'anim-wobble', label: 'Wobble' },
+  { key: 'hop', cls: 'anim-hop', label: 'Hop' },
+  { key: 'swing', cls: 'anim-swing', label: 'Swing' },
+  { key: 'flip', cls: 'anim-flip', label: 'Flip' },
+];
+// Pastel colours that glow on the dark background. The keys are kept, so rewards saved earlier keep their colour.
+const REWARD_COLOURS = [
+  { key: 'violet', label: 'Lavender', from: '#c4b5fd', to: '#f0abfc', spark: '#f5d0fe' },
+  { key: 'gold', label: 'Butter', from: '#fde68a', to: '#fcd34d', spark: '#fef9c3' },
+  { key: 'rose', label: 'Rose', from: '#f9a8d4', to: '#fda4af', spark: '#fce7f3' },
+  { key: 'emerald', label: 'Mint', from: '#6ee7b7', to: '#5eead4', spark: '#ccfbf1' },
+  { key: 'sky', label: 'Sky', from: '#7dd3fc', to: '#a5b4fc', spark: '#e0f2fe' },
+  { key: 'coral', label: 'Peach', from: '#fdba74', to: '#fda4af', spark: '#ffedd5' },
+  { key: 'teal', label: 'Aqua', from: '#67e8f9', to: '#93c5fd', spark: '#cffafe' },
+];
+const pickOption = (list, key) => list.find((x) => x.key === key) || null;
+
+// The look for a set of choices, resolved to what the page needs.
+function lookFor(st) {
+  const ic = pickOption(REWARD_ICONS, st.icon);
+  const an = pickOption(REWARD_ANIMS, st.anim);
+  const co = pickOption(REWARD_COLOURS, st.color);
+  return {
+    icon: ic.icon, anim: an.cls, from: co.from, to: co.to, spark: co.spark,
+    style: { icon: ic.key, anim: an.key, color: co.key },
+  };
+}
+
+// A starting look by position, so the first few rewards differ in colour, icon and motion.
+function styleForIndex(i) {
+  return {
+    icon: REWARD_ICONS[i % REWARD_ICONS.length].key,
+    anim: REWARD_ANIMS[i % REWARD_ANIMS.length].key,
+    color: REWARD_COLOURS[i % REWARD_COLOURS.length].key,
+  };
+}
+
+// Rewards saved before the choices existed get a look from their old number or their id, so they never change.
+function rewardLook(r) {
+  const st = r.style;
+  if (st && pickOption(REWARD_ICONS, st.icon) && pickOption(REWARD_ANIMS, st.anim) && pickOption(REWARD_COLOURS, st.color)) {
+    return lookFor(st);
+  }
+  let n = Number.isInteger(r.look) ? r.look : 0;
+  if (!Number.isInteger(r.look)) {
+    for (const ch of String(r.id)) n = (n * 31 + ch.charCodeAt(0)) >>> 0;
+  }
+  return lookFor(styleForIndex(n));
+}
+
+// The look a new reward starts with: the first colour that no other reward uses yet.
+function defaultRewardStyle(rewards) {
+  const used = new Set(rewards.map((r) => rewardLook(r).style.color));
+  const i = REWARD_COLOURS.findIndex((c) => !used.has(c.key));
+  return styleForIndex(i >= 0 ? i : rewards.length);
+}
+
+// Sparkles around each gift: [left %, top %, delay in seconds].
+const REWARD_SPARKS = [[6, 12, 0], [86, 8, 0.7], [92, 58, 1.3], [8, 72, 1.9], [48, -2, 0.4], [50, 98, 1.1]];
+
+const lookVars = (look) => `--from:${look.from};--to:${look.to};--spark:${look.spark}`;
+
+// The moving icon, with its sparkles. Used on each reward and in the live preview.
+function rewardStageHTML(look) {
+  const sparks = REWARD_SPARKS.map(([x, y, d]) => `<i class="reward-spark" style="left:${x}%;top:${y}%;animation-delay:${d}s"></i>`).join('');
+  return `
+    <div class="reward-stage">
+      <span class="reward-glow" aria-hidden="true"></span>
+      ${sparks}
+      <div class="reward-orb ${look.anim}">${icon(look.icon)}</div>
+    </div>`;
+}
+
+function rewardCardHTML(r, i = 0) {
+  const p = L.rewardProgress(r, state.goals);
+  const look = rewardLook(r);
+  const expanded = rewardUI.expanded.has(r.id);
+  const statusOf = (j) => {
+    if (j.done) return 'Accomplished';
+    if (!j.goal) return 'No longer on record';
+    return j.goal.status === 'active' ? `${j.pct}% · In progress` : 'Not accomplished';
+  };
+  const rows = p.journeys.map((j) => `
+    <li class="${j.done ? 'done' : ''}">${icon(j.done ? 'circle-check' : 'circle')}<span>${esc(j.goal?.title || 'Removed journey')}</span><small>${statusOf(j)}</small></li>`).join('');
+  const countText = p.total
+    ? `${p.done} of ${p.total} ${p.total === 1 ? 'journey' : 'journeys'} accomplished`
+    : 'No journeys attached yet';
+  const moreLabel = expanded ? 'Hide journeys' : `Show ${p.total} ${p.total === 1 ? 'journey' : 'journeys'}`;
+  const due = rewardDueDate(r);
+  const today = L.todayStr();
+  const late = !!due && !p.ready && due < today;
+  const daysLeft = due ? L.diffDays(today, due) : null;
+  const dueText = !due ? ''
+    : late ? `Deadline passed on ${fmtDate(due)}`
+      : daysLeft === 0 ? `Due today, ${fmtDate(due)}`
+        : `Due ${fmtDate(due)} · ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'} left`;
+  return `
+    <article class="reward-card${p.ready ? ' ready' : ''}${late ? ' late' : ''}" style="--i:${i};${lookVars(look)}">
+      ${rewardStageHTML(look)}
+      <h3 class="reward-title">${esc(r.title)}</h3>
+      ${rewardStackHTML(r.items || [])}
+      ${r.note ? `<p class="reward-note">${esc(r.note)}</p>` : ''}
+      <div class="reward-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p.pct}" aria-label="Progress toward ${esc(r.title)}">
+        <div class="reward-bar"><span style="width:${p.pct}%"></span></div>
+        <small class="reward-count">${p.ready ? 'Ready to open!' : countText}</small>
+        ${dueText ? `<small class="reward-due${late ? ' late' : ''}">${dueText}</small>` : ''}
+      </div>
+      ${p.total ? `
+      <button type="button" class="reward-more${expanded ? ' open' : ''}" data-action="rw-more" data-id="${esc(r.id)}" aria-expanded="${expanded}">
+        <span>${moreLabel}</span>${icon('chevron-down')}
+      </button>
+      <div class="reward-drawer${expanded ? ' open' : ''}">
+        <div class="reward-drawer-inner"><ul class="reward-journeys">${rows}</ul></div>
+      </div>` : ''}
+      <div class="reward-foot">
+        ${p.ready ? `<button class="btn primary reward-claim" data-action="rw-claim" data-id="${esc(r.id)}">${icon('party-popper')}Open and claim</button>` : ''}
+        <button class="btn ghost sm" data-action="rw-edit" data-id="${esc(r.id)}">${icon('pencil')}Edit</button>
+        <button class="btn ghost sm" data-action="rw-delete" data-id="${esc(r.id)}">${icon('trash-2')}Delete</button>
+      </div>
+    </article>`;
+}
+
+// The three look choices in the form, each its own drop-down: icon, animation and colour.
+function lookChoicesHTML(st) {
+  const select = (name, label, list, current) => `
+    <label class="field look-field"><span>${label}</span>
+      <select name="${name}">${list.map((o) => `<option value="${o.key}"${o.key === current ? ' selected' : ''}>${o.label}</option>`).join('')}</select>
+    </label>`;
+  return `
+    <div class="look-section">
+      ${select('icon', 'Icon', REWARD_ICONS, st.icon)}
+      ${select('anim', 'Animation', REWARD_ANIMS, st.anim)}
+      ${select('color', 'Colour', REWARD_COLOURS, st.color)}
+    </div>`;
+}
+
+// The live preview at the top of the form. It follows the choices as they are changed.
+function lookPreviewHTML(look) {
+  return `<div class="look-preview" data-look-preview style="${lookVars(look)}">${rewardStageHTML(look)}<p class="look-preview-name">Preview</p></div>`;
+}
+
+// A burst of confetti in the reward's own colours, over the Rewards panel.
+function burstConfetti(look) {
+  const wrap = rewardUI.wrap;
+  if (!wrap) return;
+  const colours = [look.from, look.to, look.spark, '#ffffff'];
+  const layer = document.createElement('div');
+  layer.className = 'reward-burst';
+  layer.innerHTML = Array.from({ length: 48 }, (_, i) => {
+    const a = Math.random() * Math.PI * 2;
+    const d = 120 + Math.random() * 240;
+    return `<span style="--dx:${(Math.cos(a) * d).toFixed(0)}px;--dy:${(Math.sin(a) * d - 70).toFixed(0)}px;--r:${Math.round(Math.random() * 720 - 360)}deg;--c:${colours[i % colours.length]};--delay:${(Math.random() * 0.15).toFixed(2)}s"></span>`;
+  }).join('');
+  wrap.appendChild(layer);
+  setTimeout(() => layer.remove(), 1900);
+}
+
+// The day a reward is due: the deadline it was saved with, or else the end of its last journey.
+// The gifts packed into a reward: one line in brackets, separated by commas.
+function rewardStackHTML(items = []) {
+  if (!items.length) return '';
+  return `<p class="stack-text">(${items.map((t) => esc(t)).join(', ')})</p>`;
+}
+
+// The package field in the form: type a gift, press Add (or Enter), and each one appears as a row.
+function packageFieldHTML(items = []) {
+  return `
+    <div class="field pkg-field">
+      <span>Gifts in this package</span>
+      <div class="pkg-add">
+        <input type="text" name="draft" data-pkg-draft maxlength="${L.MAX_REWARD_ITEM_TITLE}" placeholder="For example, Dinner out">
+        <button type="button" class="btn ghost sm" data-action="rw-item-add">${icon('plus')}Add</button>
+      </div>
+      <div class="pkg-list" data-pkg-list>${items.map(pkgRowHTML).join('')}</div>
+      <small class="field-hint">Optional. Shown in brackets on the card.</small>
+    </div>`;
+}
+
+function pkgRowHTML(text) {
+  return `<div class="pkg-row"><input type="hidden" name="item" value="${esc(text)}"><span>${esc(text)}</span><button type="button" class="icon-btn pkg-remove" data-action="rw-item-remove" aria-label="Remove ${esc(text)}">${icon('x')}</button></div>`;
+}
+
+// Adds the typed gift to the package list, if there is room and it is not empty.
+function addPackageItem(form) {
+  const input = form.querySelector('[data-pkg-draft]');
+  const errBox = form.querySelector('[data-error]');
+  const text = L.titleCase(String(input.value || '').trim());
+  if (!text) return;
+  if (form.querySelectorAll('input[name="item"]').length >= L.MAX_REWARD_ITEMS) {
+    errBox.textContent = `A package holds up to ${L.MAX_REWARD_ITEMS} gifts.`;
+    errBox.hidden = false;
+    return;
+  }
+  form.querySelector('[data-pkg-list]').insertAdjacentHTML('beforeend', pkgRowHTML(text));
+  input.value = '';
+  errBox.hidden = true;
+  input.focus();
+}
+
+function rewardDueDate(r) {
+  return r.deadline || L.latestJourneyDeadline(r.goalIds || [], state.goals);
+}
+
+function deadlineHint(lastEnd) {
+  return lastEnd
+    ? `Last journey ends ${fmtDate(lastEnd)}. Can't be earlier.`
+    : 'Set to when the last journey ends.';
+}
+
+function rewardFormHTML() {
+  const editing = rewardUI.editId ? state.rewards.find((r) => r.id === rewardUI.editId) : null;
+  const r = editing || { title: '', note: '', goalIds: [] };
+  const lastEnd = L.latestJourneyDeadline(r.goalIds || [], state.goals) || '';
+  const st = editing ? rewardLook(editing).style : defaultRewardStyle(state.rewards);
+  const choices = L.rewardChoices(state.goals);
+  const picks = choices.length
+    ? choices.map((g) => `
+      <label class="check-row reward-pick">
+        <input type="checkbox" name="goalIds" value="${esc(g.id)}"${r.goalIds.includes(g.id) ? ' checked' : ''}>
+        <span>${icon(g.icon)}${esc(g.title)}</span>
+        <small class="muted">${esc(L.TYPE_LABEL[g.type] || '')} · ${g.status === 'completed' ? 'Accomplished' : 'In progress'}</small>
+      </label>`).join('')
+    : '<p class="muted">Start a journey first, then come back here to attach it to a reward.</p>';
+  return `
+    <form id="reward-form" class="form" novalidate>
+      ${lookPreviewHTML(lookFor(st))}
+      <label class="field"><span>Reward ${REQ}</span>
+        <input name="title" maxlength="${L.MAX_REWARD_TITLE}" placeholder="For example, a movie night" value="${esc(r.title)}" required></label>
+      <label class="field"><span>Note</span>
+        <input name="note" maxlength="${L.MAX_REWARD_NOTE}" placeholder="Optional" value="${esc(r.note || '')}"></label>
+      <label class="field"><span>Deadline</span>
+        <input type="date" name="deadline" min="${esc(lastEnd)}" value="${esc(r.deadline || lastEnd)}">
+        <small class="field-hint" data-deadline-hint>${deadlineHint(lastEnd)}</small></label>
+      ${packageFieldHTML(r.items || [])}
+      ${lookChoicesHTML(st)}
+      <div class="field"><span>Journeys that earn it</span><div class="reward-picks">${picks}</div></div>
+      <p class="error" data-error hidden></p>
+      <div class="reward-actions">
+        <button type="button" class="btn ghost" data-action="rw-back">Cancel</button>
+        <button type="submit" class="btn primary">${icon('check')}Save reward</button>
+      </div>
+    </form>`;
+}
+
+// Keeps the live preview in step with the icon, movement and colour chosen in the form.
+function onRewardsChange(e) {
+  const form = e.target.closest('#reward-form');
+  if (!form) return;
+  // Picking journeys moves the deadline up to their last end, and never below it.
+  if (e.target.name === 'goalIds') {
+    const ids = [...form.querySelectorAll('input[name="goalIds"]:checked')].map((n) => n.value);
+    const last = L.latestJourneyDeadline(ids, state.goals) || '';
+    const input = form.querySelector('input[name="deadline"]');
+    if (input) {
+      input.min = last;
+      if (last && (!input.value || input.value < last)) input.value = last;
+      const hint = form.querySelector('[data-deadline-hint]');
+      if (hint) hint.textContent = deadlineHint(last);
+    }
+    return;
+  }
+  const fd = new FormData(form);
+  const st = { icon: fd.get('icon'), anim: fd.get('anim'), color: fd.get('color') };
+  if (!pickOption(REWARD_ICONS, st.icon) || !pickOption(REWARD_ANIMS, st.anim) || !pickOption(REWARD_COLOURS, st.color)) return;
+  const preview = form.querySelector('[data-look-preview]');
+  if (preview) preview.outerHTML = lookPreviewHTML(lookFor(st));
+}
+
+const newRewardId = () => (crypto.randomUUID
+  ? crypto.randomUUID()
+  : `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
+
+// Saves the whole rewards list. The panel updates at once; the cloud copy follows.
+async function changeRewards(next, message, kind = 'info') {
+  state.rewards = next;
+  paintRewards({ force: true });
+  toast(message, kind);
+  try {
+    await db.saveRewards(state.user.uid, next);
+  } catch (err) {
+    toast(err.message || 'Could not save the reward.', 'error');
+  }
+}
+
+async function onRewardsClick(e) {
+  const btn = e.target.closest('[data-action^="rw-"]');
+  if (!btn) return;
+  const { action } = btn.dataset;
+  const id = btn.dataset.id;
+  if (action === 'rw-new' || action === 'rw-edit') {
+    rewardUI.mode = 'form';
+    rewardUI.editId = action === 'rw-edit' ? id : null;
+    paintRewards({ force: true });
+    return;
+  }
+  if (action === 'rw-back') {
+    rewardUI.mode = 'list';
+    rewardUI.editId = null;
+    paintRewards({ force: true });
+    return;
+  }
+  if (action === 'rw-item-add') {
+    addPackageItem(btn.closest('form'));
+    return;
+  }
+  if (action === 'rw-item-remove') {
+    btn.closest('.pkg-row')?.remove();
+    return;
+  }
+  if (action === 'rw-more') {
+    // Opens or closes the journeys under one reward, in place, so the rest of the panel does not redraw.
+    const card = btn.closest('.reward-card');
+    const on = !rewardUI.expanded.has(id);
+    if (on) rewardUI.expanded.add(id); else rewardUI.expanded.delete(id);
+    card?.querySelector('.reward-drawer')?.classList.toggle('open', on);
+    btn.classList.toggle('open', on);
+    btn.setAttribute('aria-expanded', String(on));
+    const n = card ? card.querySelectorAll('.reward-journeys li').length : 0;
+    btn.querySelector('span').textContent = on ? 'Hide journeys' : `Show ${n} ${n === 1 ? 'journey' : 'journeys'}`;
+    return;
+  }
+  const reward = state.rewards.find((r) => r.id === id);
+  if (!reward) return;
+  if (action === 'rw-claim') {
+    // Only a reward whose journeys are all accomplished can be claimed.
+    if (!L.rewardProgress(reward, state.goals).ready) return;
+    // The gift opens with confetti, then the reward moves to the opened list.
+    btn.disabled = true;
+    btn.closest('.reward-card')?.classList.add('opening');
+    burstConfetti(rewardLook(reward));
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    const claimedAt = new Date().toISOString();
+    await changeRewards(
+      state.rewards.map((r) => (r.id === id ? { ...r, claimedAt } : r)),
+      `Reward claimed: ${reward.title}`,
+      'success',
+    );
+    return;
+  }
+  if (action === 'rw-delete') {
+    const yes = await confirmDialog({
+      title: 'Delete this reward?',
+      message: `"${esc(reward.title)}" will be removed. Its journeys are kept.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (yes) await changeRewards(state.rewards.filter((r) => r.id !== id), 'Reward deleted');
+  }
+}
+
+function onRewardsSubmit(e) {
+  if (!e.target.matches('#reward-form')) return;
+  e.preventDefault();
+  const form = e.target;
+  const errBox = form.querySelector('[data-error]');
+  errBox.hidden = true;
+  const fd = new FormData(form);
+  let data;
+  try {
+    data = L.cleanReward({
+      title: fd.get('title'),
+      note: fd.get('note'),
+      goalIds: fd.getAll('goalIds'),
+      items: [...fd.getAll('item'), fd.get('draft') || ''],   // a gift typed but not yet added is kept too
+    });
+    data.deadline = L.cleanDeadline(fd.get('deadline'), data.goalIds, state.goals);
+  } catch (err) {
+    errBox.textContent = err.message;
+    errBox.hidden = false;
+    return;
+  }
+  const st = { icon: fd.get('icon'), anim: fd.get('anim'), color: fd.get('color') };
+  if (!pickOption(REWARD_ICONS, st.icon) || !pickOption(REWARD_ANIMS, st.anim) || !pickOption(REWARD_COLOURS, st.color)) {
+    errBox.textContent = 'Choose an icon, a movement and a colour.';
+    errBox.hidden = false;
+    return;
+  }
+  data.style = st;
+  const editId = rewardUI.editId;
+  const next = editId
+    ? state.rewards.map((r) => (r.id === editId ? { ...r, ...data } : r))
+    : [...state.rewards, { id: newRewardId(), ...data, createdAt: new Date().toISOString(), claimedAt: null }];
+  rewardUI.mode = 'list';
+  rewardUI.editId = null;
+  changeRewards(next, editId ? 'Reward saved' : 'Reward added', 'success');
 }
 
 // ---------- actions ----------
@@ -1942,6 +2449,23 @@ function onViewInput(e) {
 function onRailClick(e) {
   const acc = e.target.closest('[data-action="account"]');
   if (acc) openAccount();
+  // The "All journeys" button opens the panel, and a second tap closes it.
+  if (e.target.closest('[data-action="all-journeys"]')) {
+    if (state.railAll) closeAllJourneys();
+    else {
+      state.railAll = true;
+      renderRail();
+      refreshIcons();
+    }
+    return;
+  }
+  // Choosing a journey from the panel opens it; the panel closes once the page changes.
+  if (e.target.closest('.rail-sheet a')) setTimeout(closeAllJourneys, 0);
+}
+
+// Tapping anywhere outside the bottom bar closes the "All journeys" panel.
+function onDocPointerDown(e) {
+  if (state.railAll && !e.target.closest('#rail')) closeAllJourneys();
 }
 
 function onModalRootClick(e) {
@@ -1952,6 +2476,11 @@ function onModalRootClick(e) {
     db.logout().then(() => toast('Signed out'));
   }
   if (act.dataset.action === 'export') exportData();
+  if (act.dataset.action === 'rewards') {
+    document.querySelector('.modal-backdrop')?.remove();
+    openRewards();
+  }
+  if (act.dataset.action === 'local-reset') localTools?.runReset({ uid: state.user.uid, confirmDialog, toast });
   if (act.dataset.action === 'reset-account') resetAccount();
 }
 
@@ -2003,6 +2532,7 @@ function render() {
   if (r.name !== 'home' && r.name !== 'journeys') state.reorder = false;
   // Each screen opens with every column closed.
   if (changed) state.openType = null;
+  if (changed) state.railAll = false;
 
   let html;
   if (r.name === 'goal') html = viewGoal(r.id);
@@ -2016,6 +2546,7 @@ function render() {
   v.innerHTML = html;
   refreshIcons();
   if (changed) setTimeout(() => v.classList.remove('page-in'), 1200);
+  paintRewards();
 }
 
 // ---------- boot ----------
@@ -2029,6 +2560,7 @@ async function boot() {
   window.addEventListener('pointercancel', endDrag);
   $('#rail').addEventListener('click', onRailClick);
   $('#rail').addEventListener('pointerdown', onRailDown);
+  document.addEventListener('pointerdown', onDocPointerDown);
   // The rail's links must not start the browser's own link drag, which would fight our drag.
   $('#rail').addEventListener('dragstart', (e) => e.preventDefault());
   // The click that ends a rail drag must not open the journey.
@@ -2061,8 +2593,11 @@ async function boot() {
     if (!user) {
       state.user = null;
       state.goals = [];
+      state.rewards = [];
       unsubscribeGoals?.();
       unsubscribeGoals = null;
+      unsubscribeRewards?.();
+      unsubscribeRewards = null;
       render();
       return;
     }
@@ -2073,6 +2608,13 @@ async function boot() {
         user.uid,
         (goals) => { state.goals = goals; state.goalsReady = true; ensureOrder(); repairFinishedSankalpas(); render(); },
         (err) => toast(`Could not load your data: ${err.message}`, 'error'),
+      );
+    }
+    if (!unsubscribeRewards) {
+      unsubscribeRewards = db.subscribeRewards(
+        user.uid,
+        (rewards) => { state.rewards = rewards; paintRewards(); },
+        (err) => console.warn('Rewards not loaded', err),
       );
     }
     render();
