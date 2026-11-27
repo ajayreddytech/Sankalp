@@ -327,12 +327,12 @@ test('the day map: a day stays open until its numbers are met, then the next day
   assert.equal(p.days[1].state, 'active');
 });
 
-test('a past day with nothing logged is missed and closed; the current day is the open one', () => {
+test('a day with nothing logged stays open through the next day, then is missed and closed', () => {
   const s = smartGoal('d2', { startDate: '2026-01-01', endDate: '2026-01-30', now: at('2026-01-01') });
   const p = smartProgress(s, '2026-01-03');
   assert.equal(p.days[0].state, 'missed');
-  assert.equal(p.days[1].state, 'missed');
-  assert.equal(p.openDay, '2026-01-03');
+  assert.equal(p.days[1].state, 'active');   // yesterday: overdue, still open
+  assert.equal(p.openDay, '2026-01-02');
   assert.equal(p.days[2].state, 'active');
   assert.equal(p.days[3].state, 'locked');
 });
@@ -410,7 +410,8 @@ test('SMART logging is refused before the start and for days not yet reached', (
 test('a SMART goal never expires on its own: the end date moves with the pace', () => {
   const s = smartGoal('p7', { startDate: '2026-01-01', endDate: '2026-01-05', now: at('2026-01-01') });
   assert.equal(notAccomplished([s], '2026-02-01').length, 0);
-  assert.equal(nextActionText(s, '2026-01-02').kind, 'today');
+  // Day 1 was not logged, so on day 2 it is overdue (still open), not failed.
+  assert.equal(nextActionText(s, '2026-01-02').kind, 'overdue');
 });
 
 test('abandoning a SMART goal records how many targets were met', () => {
@@ -827,9 +828,11 @@ test('a SMART day with any numbers logged is checked in, even if the targets are
   const logged = { ...g, logs: { '2026-01-01': { 0: 0 } } };
   assert.equal(nextDueDate(logged, '2026-01-02'), '2026-01-02');
   assert.equal(isOverdue(logged, '2026-01-02'), false);
-  // Day 1 with nothing logged is missed on day 3, not overdue: past days are closed.
-  assert.equal(isOverdue(g, '2026-01-03'), false);
+  // Day 1 with nothing logged is overdue on day 2, and missed (closed) on day 3.
+  assert.equal(isOverdue(g, '2026-01-02'), true);
+  assert.equal(nextDueDate(g, '2026-01-02'), '2026-01-01');
   assert.equal(smartProgress(g, '2026-01-03').days[0].state, 'missed');
+  assert.equal(nextDueDate(g, '2026-01-03'), '2026-01-02');
 });
 
 // ---------- regression tests for the critical fixes ----------
@@ -844,12 +847,13 @@ const twoItems = [
 ];
 
 test('a partly entered SMART day stays due today until every item has a number', () => {
-  const g = planGoal(twoItems, { '2026-01-02': { 0: 1 } });
+  const day1 = { 0: 1, 1: 1 };   // day 1 is checked in, so only day 2 is due
+  const g = planGoal(twoItems, { '2026-01-01': day1, '2026-01-02': { 0: 1 } });
   assert.equal(nextDueDate(g, '2026-01-02'), '2026-01-02');
   assert.equal(checkinCounts([g], '2026-01-02').today, 1);
   assert.equal(checkinCounts([g], '2026-01-02').tomorrow, 0);
   assert.equal(checkinSummary([g], '2026-01-02').filled, 0);
-  const full = planGoal(twoItems, { '2026-01-02': { 0: 1, 1: 0 } });
+  const full = planGoal(twoItems, { '2026-01-01': day1, '2026-01-02': { 0: 1, 1: 0 } });
   assert.equal(nextDueDate(full, '2026-01-02'), '2026-01-03');
   assert.equal(checkinSummary([full], '2026-01-02').filled, 1);
 });
@@ -924,4 +928,12 @@ test('restarting an active journey clears its progress and starts on the new dat
   assert.deepEqual(p.history, []);
   assert.equal(p.smart.endDate, '2026-12-03');
   assert.equal(p.smart.plan.length, 1);
+});
+
+test('a missed SMART day can be logged the next day, then it closes', () => {
+  const s = smartGoal('g1', { startDate: '2026-01-01', endDate: '2026-01-10', now: at('2026-01-01') });
+  const g = { ...s, smart: { ...s.smart, plan: [{ action: 'Read', amount: 1, per: 'day' }] } };
+  const r = applySmartLog(g, [{ index: 0, date: '2026-01-01', value: 1 }], at('2026-01-02'));
+  assert.equal(smartProgress({ ...g, ...r.patch }, '2026-01-02').days[0].state, 'done');
+  assert.throws(() => applySmartLog(g, [{ index: 0, date: '2026-01-01', value: 1 }], at('2026-01-03')), /closed/);
 });

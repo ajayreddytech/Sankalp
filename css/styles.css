@@ -177,6 +177,8 @@ code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
 .due-title strong { display: block; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .due-title small { color: var(--muted); font-size: 12px; }
 .overdue-tag { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; vertical-align: middle; background: rgba(251, 113, 133, 0.14); color: #fda4af; }
+.due-row:has(> .yday-tag) { position: relative; }
+.yday-tag { position: absolute; top: 8px; right: 10px; padding: 2px 8px; border-radius: 99px; font-size: 10.5px; font-weight: 700; background: rgba(148, 163, 184, 0.16); color: var(--muted); pointer-events: none; }
 .due-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .all-clear {
   display: flex; align-items: center; gap: 12px; padding: 18px; border-radius: 20px;
@@ -1345,36 +1347,58 @@ input, textarea, select, option { text-transform: none; }
 .acc-page .rec-side { flex-wrap: wrap; }
 .acc-page .rec-status { white-space: normal; }
 
-/* "All journeys": a single button in the phone bar. Desktop keeps its side list. */
-.rail-all, .rail-sheet { display: none; }
+/* The bar's three type buttons (habits, sankalpas, SMART goals), icons only. Each opens a panel
+   with that type's journeys: beside the bar on a laptop, above it on a phone. */
+/* The bar holds only a few icons now, so it never scrolls; that lets the type panel show beside it. */
+.rail { overflow: visible; }
+.rail-types { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.rail-types::before { content: ""; display: block; width: 26px; height: 1px; background: var(--line-strong); margin-bottom: 0; }
+.rail-type.active::after { display: none; }
+.rail-sheet {
+  display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px;
+  position: absolute; left: calc(100% + 14px); top: var(--sheet-top, 0px);
+  width: 320px; max-height: min(70vh, 520px); padding: 12px; z-index: 2;
+  border-radius: 24px; background: rgba(17, 17, 26, 0.96); border: 1px solid var(--line-strong);
+  box-shadow: 0 20px 50px -18px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
+  animation: rail-sheet-side 0.3s var(--ease) both;
+}
+.rail-sheet-head {
+  display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted); padding: 2px 6px 0; margin: 0;
+}
+.rail-sheet-head svg, .rail-sheet-head i { width: 15px; height: 15px; }
+.rail-sheet-empty { font-size: 14px; padding: 4px 6px 6px; margin: 0; }
+.rail-sheet-goals {
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-height: 0; margin: 0; padding: 0 0 2px;
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+}
+.rail-sheet-row { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.rail-sheet-row > a {
+  flex: 1; min-width: 0; width: auto; height: auto; min-height: 48px; display: flex; align-items: center; justify-content: flex-start;
+  gap: 12px; padding: 8px 12px; border-radius: 16px;
+}
+.rail-sheet-row > a svg, .rail-sheet-row > a i { width: 20px; height: 20px; flex-shrink: 0; }
+.rail-sheet-row > a span { font-size: 15px; font-weight: 600; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.rail-sheet-row > a.active::before { display: none; }
+.rail-sheet-row > a.active { box-shadow: inset 0 0 0 1px var(--c); }
+.drag-ghost.rail-sheet-row { border-radius: 16px; background: rgba(17, 17, 26, 0.96); }
 @media (max-width: 720px) {
-  .rail > .rail-goals { display: none; }
-  .rail > .rail-all { display: grid; }
+  .rail-types { flex-direction: row; gap: 6px; }
+  .rail-types::before { display: none; }
+  .rail-types > .rail-item { flex-shrink: 0; width: 46px; height: 46px; }
   .rail-sheet {
-    display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px;
-    position: absolute; left: 50%; bottom: calc(100% + 12px); transform: translateX(-50%);
-    width: min(340px, calc(100vw - 32px)); max-height: min(60vh, 480px); padding: 12px;
-    border-radius: 24px; background: rgba(17, 17, 26, 0.96); border: 1px solid var(--line-strong);
+    left: 50%; top: auto; bottom: calc(100% + 12px); transform: translateX(-50%);
+    width: min(340px, calc(100vw - 32px)); max-height: min(60vh, 480px);
     box-shadow: 0 -20px 50px -18px rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
     animation: rail-sheet-in 0.3s var(--ease) both;
   }
-  .rail-sheet-head { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 2px 6px 0; }
-  .rail-sheet-goals {
-    display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-height: 0; margin: 0; padding: 0 0 2px;
-    overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
-    scroll-snap-type: none; scrollbar-width: thin;
-  }
-  .rail-sheet-goals > a {
-    width: 100%; height: auto; min-height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-start;
-    gap: 12px; padding: 8px 12px; border-radius: 16px;
-  }
-  .rail-sheet-goals > a svg, .rail-sheet-goals > a i { width: 20px; height: 20px; flex-shrink: 0; }
-  .rail-sheet-goals > a span { font-size: 15px; font-weight: 600; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
-  .rail-sheet-goals > a.active::before { display: none; }
-  .rail-sheet-goals > a.active { box-shadow: inset 0 0 0 1px var(--c); }
+}
+@media (max-width: 380px) {
+  .rail-types > .rail-item { width: 42px; height: 42px; }
 }
 @keyframes rail-sheet-in { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes rail-sheet-side { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
 
 /* Rewards: each reward has its own colours, icon, sparkles and animation (set in app.js by --from, --to, --spark). */
 .rewards-body { text-align: center; }

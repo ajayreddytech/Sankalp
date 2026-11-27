@@ -54,7 +54,7 @@ export const periodLabel = (per, unit = '') => {
   return unit ? `${unit} ${label}` : label;
 };
 
-export const TYPES = ['habit', 'sankalpa', 'smart'];
+export const TYPES = ['habit', 'smart', 'sankalpa'];   // the order shown everywhere
 export const TYPE_LABEL = { habit: 'Habit', sankalpa: 'Sankalpa', smart: 'SMART Goal' };
 
 // The text parts of a SMART goal. Actionable and measurable are the plan table instead.
@@ -645,8 +645,10 @@ export function smartProgress(goal, today = todayStr()) {
     : addDays(today, projectedRemaining - 1);
   const projectedDays = diffDays(start, projectedEnd) + 1;
 
-  // Day map, from the first day to the projected end. Only the current day can still be logged.
-  // Earlier days are closed: met is done, anything logged is partial, and nothing logged is missed.
+  // Day map, from the first day to the projected end. The current day can be logged, and so can the
+  // day before it while its numbers are not all entered (it shows as overdue). Older days are closed:
+  // met is done, anything logged is partial, and nothing logged is missed.
+  const graceDay = addDays(day, -1);
   let openDay = null;
   const days = [];
   for (let i = 0; i < projectedDays; i++) {
@@ -655,12 +657,15 @@ export function smartProgress(goal, today = todayStr()) {
     let percent = null;
     if (date > day) state = 'locked';
     else if (dayMet(date)) state = 'done';
-    else if (date < day) {
+    else if (date === graceDay && !entriesComplete(goal, items, date)) {
+      state = 'active';
+      openDay ??= date;
+    } else if (date < day) {
       percent = dayPercent(items, logs, date) ?? 0;
       state = percent > 0 ? 'partial' : 'missed';
     } else {
       state = 'active';
-      openDay = date;
+      openDay ??= date;
     }
     days.push({ index: i, date, state, percent });
   }
@@ -775,6 +780,10 @@ export function applySmartLog(goal, entries, now = new Date()) {
 
   const plan = goal.smart.plan || [];
   const logs = { ...(goal.logs || {}) };
+  // The current day, or the overdue day before it while it is still open.
+  const day = checkinDay(goal, today);
+  const before = smartProgress(goal, today).days;
+  const isOpen = (date) => date === day || before.some((d) => d.date === date && d.state === 'active');
   for (const e of entries || []) {
     const item = plan.find((p, pos) => (Number.isFinite(p.key) ? p.key : pos) === Number(e.index));
     if (!item) throw new Error('That actionable item no longer exists.');
@@ -783,8 +792,8 @@ export function applySmartLog(goal, entries, now = new Date()) {
       throw new Error(`Enter a number of zero or more for "${item.action}".`);
     }
     const date = String(e.date || '');
-    if (date > checkinDay(goal, today)) throw new Error('That day is not open for logging yet.');
-    if (date < checkinDay(goal, today) || date < goal.attemptStart) throw new Error('That day is closed. Only the current day can be logged.');
+    if (date > day) throw new Error('That day is not open for logging yet.');
+    if (!isOpen(date) || date < goal.attemptStart) throw new Error('That day is closed. Only the current day, or a missed day before it, can be logged.');
     logs[date] = { ...(logs[date] || {}), [e.index]: v };
   }
 
@@ -1007,7 +1016,8 @@ export function nextDueDate(goal, today = todayStr()) {
     // A SMART day is checked in once every plan item has a number for it (zeros count).
     // A partly entered day stays due until the rest is entered.
     const day = checkinDay(goal, today);
-    const open = p.days.find((d) => d.date >= day && !entriesComplete(goal, p.items, d.date));
+    // The day before stays due (overdue) until its numbers are entered; older days are closed.
+    const open = p.days.find((d) => d.date >= addDays(day, -1) && !entriesComplete(goal, p.items, d.date));
     return open ? open.date : null;
   }
   const cell = journey(goal, today).cells.find((c) => c.state !== 'done' && c.state !== 'exception');

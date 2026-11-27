@@ -12,7 +12,7 @@ if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
 
 // What each kind of journey means, shown under its column so the three are easy to tell apart.
 const TYPE_PLURAL = { habit: 'Habits', sankalpa: 'Sankalpas', smart: 'SMART Goals' };
-const TYPE_ICON = { habit: 'repeat', sankalpa: 'scroll', smart: 'target' };
+const TYPE_ICON = { habit: 'toggle-right', sankalpa: 'signature', smart: 'locate-fixed' };
 const TYPE_SUB = {
   habit: '66 days in a row. Two exception days allowed.',
   sankalpa: 'A vow for the number of days you choose. No exceptions.',
@@ -36,7 +36,7 @@ const state = {
   loginError: '',
   openType: null,    // which type column (habit, sankalpa, smart) is open on Check In or Your Journeys
   rewards: [],       // the user's rewards, with the journeys attached to each
-  railAll: false,    // phones: the "All journeys" panel above the bottom bar is open
+  railType: null,   // the bar's type panel that is open: 'habit' | 'sankalpa' | 'smart', or null
 };
 let unsubscribeRewards = null;
 let unsubscribeGoals = null;
@@ -79,7 +79,12 @@ const fmtNum = (n) => {
 
 const typeName = (g) => L.TYPE_LABEL[g.type] || 'Habit';
 const keepPhrase = (g) => ({ habit: 'keep this habit', sankalpa: 'keep this sankalpa', smart: 'stick to this goal' })[g.type] || 'keep this habit';
-const sortedActive = () => L.sortByOrder(state.goals.filter((g) => g.status === 'active'));
+// Habits first, then SMART goals, then sankalpas. Within a type, the saved order.
+const sortedActive = () => {
+  const list = L.sortByOrder(state.goals.filter((g) => g.status === 'active'));
+  return L.TYPES.flatMap((t) => list.filter((g) => g.type === t))
+    .concat(list.filter((g) => !L.TYPES.includes(g.type)));
+};
 
 function route() {
   const [name = 'home', id = ''] = location.hash.replace(/^#\/?/, '').split('/');
@@ -407,7 +412,7 @@ function cancelRailHold() {
 
 function onRailDown(e) {
   if (e.button > 0) return;
-  const item = e.target.closest('.rail-goals .rail-drag');
+  const item = e.target.closest('.rail-sheet-goals .rail-drag');
   if (!item) return;
   if (e.pointerType === 'touch') {
     const { clientX: x, clientY: y } = e;
@@ -426,16 +431,17 @@ function onRailDown(e) {
   drag.pending = { item, x: e.clientX, y: e.clientY };
 }
 
-// Saves the order the rail shows. It covers every active journey, whatever its type.
-async function saveRailOrder(container) {
-  const ids = [...container.querySelectorAll('.drag-item, .rail-drag')].map((n) => n.dataset.id);
-  const current = sortedActive().map((g) => g.id);
-  if (ids.join('|') === current.join('|')) { render(); return; }
+// Saves a new order for one type's journeys. The other types keep their places in the shared order.
+async function saveTypeOrder(type, typeIds) {
   const byId = new Map(state.goals.map((g) => [g.id, g]));
-  ids.forEach((id, pos) => { const g = byId.get(id); if (g) g.order = pos; });
+  const current = sortedActive().map((g) => g.id);
+  let k = 0;
+  const merged = current.map((id) => (byId.get(id)?.type === type && k < typeIds.length ? typeIds[k++] : id));
+  if (merged.join('|') === current.join('|')) { render(); return; }
+  merged.forEach((id, pos) => { const g = byId.get(id); if (g) g.order = pos; });
   render();
   try {
-    await db.saveOrder(state.user.uid, ids);
+    await db.saveOrder(state.user.uid, merged);
   } catch (err) {
     toast(err.message || 'Could not save the order.', 'error');
   }
@@ -542,78 +548,65 @@ async function endDrag() {
   drag.el = null;
   state.dragging = false;
 
-  if (container.classList.contains('rail-goals')) {
-    railSuppressClickUntil = Date.now() + 400;
-    return saveRailOrder(container);
-  }
-
-  const byId = new Map(state.goals.map((g) => [g.id, g]));
-  const type = byId.get(movedId)?.type;
-  const current = sortedActive().map((g) => g.id);
-  let k = 0;
-  const merged = current.map((id) => (byId.get(id)?.type === type && k < typeIds.length ? typeIds[k++] : id));
-  if (merged.join('|') !== current.join('|')) {
-    merged.forEach((id, pos) => { const g = byId.get(id); if (g) g.order = pos; });
-    render();
-    try {
-      await db.saveOrder(state.user.uid, merged);
-    } catch (err) {
-      toast(err.message || 'Could not save the order.', 'error');
-    }
-  } else {
-    render();
-  }
+  if (container.classList.contains('rail-sheet-goals')) railSuppressClickUntil = Date.now() + 400;
+  const type = state.goals.find((g) => g.id === movedId)?.type;
+  return saveTypeOrder(type, typeIds);
 }
 
 // ---------- rail (floating left sidebar, bottom bar on phones) ----------
 
 function renderRail() {
   const r = route();
-  const active = sortedActive();
-  const cls = (name, id) => (r.name === name && (!id || r.id === id) ? 'rail-item active' : 'rail-item');
-  const goalItems = active.map((g) => `
-    <a class="${cls('goal', g.id)} goal-item rail-drag" data-id="${esc(g.id)}" href="#/goal/${encodeURIComponent(g.id)}"
-       data-tip="${esc(g.title)}" style="--c:${colour(g.color)}" aria-label="${esc(g.title)}">
-      ${icon(g.icon)}
-    </a>`).join('');
-  // Phones: the full list opens in a panel above the bar, with each journey's name, so it can scroll.
-  const allRows = active.map((g) => `
-    <a class="${cls('goal', g.id)} goal-item rail-drag" data-id="${esc(g.id)}" href="#/goal/${encodeURIComponent(g.id)}"
-       style="--c:${colour(g.color)}" aria-label="${esc(g.title)}">
-      ${icon(g.icon)}<span>${esc(g.title)}</span>
-    </a>`).join('');
-  const panel = state.railAll ? `
+  const cls = (name) => (r.name === name ? 'rail-item active' : 'rail-item');
+  // Three type buttons, icons only. Each opens a panel with that type's journeys, which can be reordered.
+  const typeBtns = L.TYPES.map((t) => {
+    const open = state.railType === t;
+    return `<button class="rail-item rail-type${open ? ' active' : ''}" data-action="rail-type" data-type="${t}"
+      data-tip="${TYPE_PLURAL[t]}" aria-label="${TYPE_PLURAL[t]}" aria-expanded="${open}" aria-controls="rail-sheet">${icon(TYPE_ICON[t])}</button>`;
+  }).join('');
+  let panel = '';
+  if (state.railType) {
+    const list = sortedActive().filter((g) => g.type === state.railType);
+    // Reorder by press and hold, then drag (with a mouse, press and move).
+    const rows = list.map((g) => `
+    <div class="rail-sheet-row rail-drag" data-id="${esc(g.id)}" style="--c:${colour(g.color)}">
+      <a class="rail-item goal-item${r.name === 'goal' && r.id === g.id ? ' active' : ''}" href="#/goal/${encodeURIComponent(g.id)}" aria-label="${esc(g.title)}">
+        ${icon(g.icon)}<span>${esc(g.title)}</span>
+      </a>
+    </div>`).join('');
+    const name = TYPE_PLURAL[state.railType];
+    panel = `
     <div class="rail-sheet" id="rail-sheet">
-      <p class="rail-sheet-head">All journeys</p>
-      <div class="rail-goals rail-sheet-goals">${allRows}</div>
-    </div>` : '';
-  // Keep the phone bar's scroll position: rebuilding the rail would otherwise jump it back to the start.
-  const keepX = $('#rail .rail-goals')?.scrollLeft ?? 0;
+      <p class="rail-sheet-head">${icon(TYPE_ICON[state.railType])}<span>${name}</span></p>
+      ${list.length ? `<div class="rail-sheet-goals">${rows}</div>` : `<p class="rail-sheet-empty muted">No ${name.toLowerCase()} yet.</p>`}
+    </div>`;
+  }
+  // Keep the panel's scroll position: rebuilding the rail would otherwise jump it back to the top.
   const keepY = $('#rail .rail-sheet-goals')?.scrollTop ?? 0;
   $('#rail').innerHTML = `
     <a class="${cls('home')}" href="#/home" data-tip="Check in" aria-label="Check in">${icon('calendar-check')}</a>
     <a class="${cls('journeys')}" href="#/journeys" data-tip="Your journeys" aria-label="Your journeys">${icon('route')}</a>
-    <button class="rail-item rail-all${state.railAll ? ' active' : ''}" data-action="all-journeys" data-tip="All journeys"
-      aria-label="All journeys" aria-expanded="${state.railAll}" aria-controls="rail-sheet">${icon('layers')}</button>
-    <div class="rail-goals">${goalItems}</div>
+    <div class="rail-types">${typeBtns}</div>
     <div class="rail-spacer"></div>
-    <a class="${cls('accomplishments')}" href="#/accomplishments" data-tip="Accomplishments" aria-label="Accomplishments">${icon('medal')}</a>
+    <a class="${cls('accomplishments')}" href="#/accomplishments" data-tip="Accomplishments" aria-label="Accomplishments">${icon('award')}</a>
     <button class="rail-item" data-action="account" data-tip="Account" aria-label="Account">${icon('circle-user-round')}</button>
     ${panel}`;
-  const strip = $('#rail .rail-goals');
-  if (strip) strip.scrollLeft = keepX;
   const list = $('#rail .rail-sheet-goals');
   if (list) list.scrollTop = keepY;
+  // On a laptop the panel opens beside its button.
+  const btn = state.railType && $(`#rail .rail-type[data-type="${state.railType}"]`);
+  if (btn) $('#rail .rail-sheet')?.style.setProperty('--sheet-top', `${btn.offsetTop}px`);
 }
 
-// Closes the phone's "All journeys" panel without rebuilding the page.
-function closeAllJourneys() {
-  if (!state.railAll) return;
-  state.railAll = false;
+// Closes the bar's type panel without rebuilding the page.
+function closeTypePanel() {
+  if (!state.railType) return;
+  state.railType = null;
   $('#rail .rail-sheet')?.remove();
-  const btn = $('#rail .rail-all');
-  btn?.classList.remove('active');
-  btn?.setAttribute('aria-expanded', 'false');
+  document.querySelectorAll('#rail .rail-type').forEach((b) => {
+    b.classList.remove('active');
+    b.setAttribute('aria-expanded', 'false');
+  });
 }
 
 // ---------- views ----------
@@ -696,8 +689,8 @@ function smartLogHTML(g, today) {
   const p = L.smartProgress(g, today);
   if (p.phase === 'upcoming') return `<p class="muted log-note">Starts ${fmtDate(g.attemptStart)}. You can log numbers from that day.</p>`;
   if (!p.items.length) return '<p class="muted log-note">This goal has no plan yet. Add one from Edit.</p>';
-  // Only the current check-in day can be logged. Earlier days are closed.
-  const date = L.checkinDay(g, today);
+  // The overdue day before comes first while it is open; otherwise the current check-in day.
+  const date = p.openDay ?? L.checkinDay(g, today);
   const dayLabel = date === today ? 'Today' : `Pending · ${fmtDate(date)}`;
 
   const valueOf = (it) => state.drafts[`${g.id}|${it.index}|${date}`] ?? g.logs?.[date]?.[it.index];
@@ -734,6 +727,8 @@ function smartLogHTML(g, today) {
 function checkRowHTML(g, today, view = null) {
   const nxt = L.nextActionText(g, today);
   const overdueTag = L.isOverdue(g, today) ? '<span class="overdue-tag">Overdue</span>' : '';
+  // Next-day journeys: what is logged today is for the day before.
+  const ydayTag = L.isNextMorning(g) ? '<span class="yday-tag">For yesterday</span>' : '';
   const titleLink = (sub) => `
     <a class="due-title" href="#/goal/${encodeURIComponent(g.id)}">
       <span class="goal-icon sm">${icon(g.icon)}</span>
@@ -750,11 +745,12 @@ function checkRowHTML(g, today, view = null) {
     if (p.phase === 'running' && !p.complete && L.nextDueDate(g, today)) {
       return `
         <div class="due-row smart-due" style="--c:${colour(g.color)}">
+          ${ydayTag}
           ${titleLink(`${nxt.text} · SMART Goal`)}
           ${smartLogHTML(g, today)}
         </div>`;
     }
-    return `<div class="due-row idle" style="--c:${colour(g.color)}">${titleLink(nxt.text)}</div>`;
+    return `<div class="due-row idle" style="--c:${colour(g.color)}">${ydayTag}${titleLink(nxt.text)}</div>`;
   }
 
   if (nxt.kind === 'today' || nxt.kind === 'overdue') {
@@ -763,6 +759,7 @@ function checkRowHTML(g, today, view = null) {
     const label = j.next.date === today ? 'Today' : `Pending · ${fmtDate(j.next.date)}`;
     return `
       <div class="due-row" style="--c:${colour(g.color)}">
+        ${ydayTag}
         ${titleLink(label)}
         <div class="due-actions">
           <button class="btn yes sm" data-action="checkin" data-goal="${g.id}" data-date="${j.next.date}" data-answer="yes">${icon('check')}Done</button>
@@ -770,7 +767,7 @@ function checkRowHTML(g, today, view = null) {
         </div>
       </div>`;
   }
-  return `<div class="due-row idle" style="--c:${colour(g.color)}">${titleLink(nxt.text)}</div>`;
+  return `<div class="due-row idle" style="--c:${colour(g.color)}">${ydayTag}${titleLink(nxt.text)}</div>`;
 }
 
 function greeting() {
@@ -1142,7 +1139,7 @@ function viewSmartGoal(g, today) {
             <span><i class="dot p"></i>Partial</span><span><i class="dot m"></i>Missed</span><span><i class="dot l"></i>Locked</span>
           </div>
         </div>
-        <p class="muted hint">Today stays open until midnight, then the day closes: done, partial by its percentage, or missed.</p>
+        <p class="muted hint">A day you don't log stays open as overdue through the next day, then it closes: done, partial by its percentage, or missed.</p>
         <div class="journey">${cells}</div>
       </section>
 
@@ -1519,11 +1516,11 @@ function openCreate() {
     <form id="create-form" class="form" novalidate>
       <div class="type-toggle three" role="radiogroup" aria-label="Type">
         <label class="type-card"><input type="radio" name="type" value="habit" checked>
-          ${icon('repeat')}<strong>Habit</strong></label>
-        <label class="type-card"><input type="radio" name="type" value="sankalpa">
-          ${icon('scroll')}<strong>Sankalpa</strong></label>
+          ${icon(TYPE_ICON.habit)}<strong>Habit</strong></label>
         <label class="type-card"><input type="radio" name="type" value="smart">
-          ${icon('target')}<strong>SMART Goal</strong></label>
+          ${icon(TYPE_ICON.smart)}<strong>SMART Goal</strong></label>
+        <label class="type-card"><input type="radio" name="type" value="sankalpa">
+          ${icon(TYPE_ICON.sankalpa)}<strong>Sankalpa</strong></label>
       </div>
       <label class="field"><span data-title-label>Habit</span>
         <input name="title" maxlength="80" placeholder="e.g. Read 10 pages, Wake at 5am" autocomplete="off"></label>
@@ -2449,23 +2446,25 @@ function onViewInput(e) {
 function onRailClick(e) {
   const acc = e.target.closest('[data-action="account"]');
   if (acc) openAccount();
-  // The "All journeys" button opens the panel, and a second tap closes it.
-  if (e.target.closest('[data-action="all-journeys"]')) {
-    if (state.railAll) closeAllJourneys();
+  // A type button opens its panel; tapping it again closes it.
+  const tb = e.target.closest('[data-action="rail-type"]');
+  if (tb) {
+    if (state.railType === tb.dataset.type) closeTypePanel();
     else {
-      state.railAll = true;
+      state.railType = tb.dataset.type;
       renderRail();
       refreshIcons();
     }
     return;
   }
   // Choosing a journey from the panel opens it; the panel closes once the page changes.
-  if (e.target.closest('.rail-sheet a')) setTimeout(closeAllJourneys, 0);
+  if (e.target.closest('.rail-sheet a')) setTimeout(closeTypePanel, 0);
 }
 
-// Tapping anywhere outside the bottom bar closes the "All journeys" panel.
+// Tapping anywhere outside the type panel closes it, including the bar's other icons.
+// The type buttons are left out: they switch or close the panel themselves.
 function onDocPointerDown(e) {
-  if (state.railAll && !e.target.closest('#rail')) closeAllJourneys();
+  if (state.railType && !e.target.closest('.rail-sheet, .rail-type')) closeTypePanel();
 }
 
 function onModalRootClick(e) {
@@ -2532,7 +2531,7 @@ function render() {
   if (r.name !== 'home' && r.name !== 'journeys') state.reorder = false;
   // Each screen opens with every column closed.
   if (changed) state.openType = null;
-  if (changed) state.railAll = false;
+  if (changed) state.railType = null;
 
   let html;
   if (r.name === 'goal') html = viewGoal(r.id);
@@ -2560,6 +2559,10 @@ async function boot() {
   window.addEventListener('pointercancel', endDrag);
   $('#rail').addEventListener('click', onRailClick);
   $('#rail').addEventListener('pointerdown', onRailDown);
+  // While a held journey is dragged, the finger moves it instead of scrolling the panel.
+  window.addEventListener('touchmove', (e) => { if (drag.el) e.preventDefault(); }, { passive: false });
+  // A long press on a journey in a type panel starts a drag, not the browser's link menu.
+  $('#rail').addEventListener('contextmenu', (e) => { if (e.target.closest('.rail-sheet-row')) e.preventDefault(); });
   document.addEventListener('pointerdown', onDocPointerDown);
   // The rail's links must not start the browser's own link drag, which would fight our drag.
   $('#rail').addEventListener('dragstart', (e) => e.preventDefault());
