@@ -73,12 +73,15 @@ const fmtNum = (n) => {
 
 const typeName = (g) => L.TYPE_LABEL[g.type] || 'Habit';
 const keepPhrase = (g) => ({ habit: 'keep this habit', sankalpa: 'keep this sankalpa', smart: 'stick to this goal' })[g.type] || 'keep this habit';
-// Habits first, then SMART goals, then sankalpas. Within a type, the saved order.
-const sortedActive = () => {
-  const list = L.sortByOrder(state.goals.filter((g) => g.status === 'active'));
+// The standard order: habits first, then SMART goals, then sankalpas. Within a type, the saved order.
+const typeOrdered = (goals) => {
+  const list = L.sortByOrder(goals);
   return L.TYPES.flatMap((t) => list.filter((g) => g.type === t))
     .concat(list.filter((g) => !L.TYPES.includes(g.type)));
 };
+const sortedActive = () => typeOrdered(state.goals.filter((g) => g.status === 'active'));
+// A percentage with at most one decimal: 42, 42.5, 0.8.
+const fmtPct = (n) => `${Math.round(n * 10) / 10}%`;
 
 function route() {
   const [name = 'home', id = ''] = location.hash.replace(/^#\/?/, '').split('/');
@@ -1813,9 +1816,9 @@ function openAccount() {
         <div><strong>${esc(u.displayName || 'Signed in')}</strong><small class="muted">${esc(u.email || '')}</small></div>
       </div>
       <div class="menu">
-        <button class="menu-item" data-action="rewards">${icon('gift')}<div><strong>Rewards</strong><small class="muted">Choose a reward, attach the journeys that earn it, and claim it when they are done</small></div></button>
-        <button class="menu-item" data-action="export">${icon('download')}<div><strong>Export my data</strong><small class="muted">Download everything as a JSON backup</small></div></button>
-        <button class="menu-item danger-text" data-action="signout">${icon('log-out')}<div><strong>Sign out</strong><small class="muted">Your data stays safe in the cloud</small></div></button>
+        <button class="menu-item" data-action="rewards">${icon('gift')}<div><strong>Rewards</strong></div></button>
+        <button class="menu-item" data-action="export">${icon('download')}<div><strong>Export my data</strong></div></button>
+        <button class="menu-item danger-text" data-action="signout">${icon('log-out')}<div><strong>Sign out</strong></div></button>
       </div>`,
   });
 }
@@ -1837,6 +1840,7 @@ function openRewards() {
       wrap.addEventListener('click', onRewardsClick);
       wrap.addEventListener('submit', onRewardsSubmit);
       wrap.addEventListener('change', onRewardsChange);
+      wrap.addEventListener('input', onRewardsInput);
       // Enter in the gift box adds the gift, rather than saving the whole reward.
       wrap.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && e.target.matches('[data-pkg-draft]')) {
@@ -1888,16 +1892,110 @@ function rewardsListHTML() {
 }
 
 // A reward's look is three choices: its icon, how it moves, and its colours. Each reward saves its own choices.
+// Grouped by the ways people celebrate. The first 8 must stay first and in this order (see LEGACY_LOOKS).
 const REWARD_ICONS = [
-  { key: 'gift', icon: 'gift', label: 'Gift' },
-  { key: 'box', icon: 'package', label: 'Box' },
-  { key: 'crown', icon: 'crown', label: 'Crown' },
-  { key: 'award', icon: 'award', label: 'Award' },
-  { key: 'trophy', icon: 'trophy', label: 'Trophy' },
-  { key: 'medal', icon: 'medal', label: 'Medal' },
-  { key: 'ticket', icon: 'ticket', label: 'Ticket' },
-  { key: 'party', icon: 'party-popper', label: 'Prize' },
+  { key: 'gift', icon: 'gift', label: 'Gift', group: 'Classic Prizes' },
+  { key: 'box', icon: 'package', label: 'Box', group: 'Classic Prizes' },
+  { key: 'crown', icon: 'crown', label: 'Crown', group: 'Marking the Moment' },
+  { key: 'award', icon: 'award', label: 'Award', group: 'Marking the Moment' },
+  { key: 'trophy', icon: 'trophy', label: 'Trophy', group: 'Marking the Moment' },
+  { key: 'medal', icon: 'medal', label: 'Medal', group: 'Marking the Moment' },
+  { key: 'ticket', icon: 'ticket', label: 'Ticket', group: 'Experiences' },
+  { key: 'party', icon: 'party-popper', label: 'Party', group: 'Friends & Family' },
+  // Food and drinks
+  { key: 'dinner', icon: 'utensils-crossed', label: 'Dinner Out', group: 'Good Food' },
+  { key: 'fine-dining', icon: 'utensils', label: 'Fine Dining', group: 'Good Food' },
+  { key: 'pizza', icon: 'pizza', label: 'Pizza', group: 'Good Food' },
+  { key: 'burger', icon: 'sandwich', label: 'Burger', group: 'Good Food' },
+  { key: 'soup', icon: 'soup', label: 'Comfort Food', group: 'Good Food' },
+  { key: 'croissant', icon: 'croissant', label: 'Brunch', group: 'Good Food' },
+  { key: 'cake', icon: 'cake', label: 'Cake', group: 'Good Food' },
+  { key: 'cake-slice', icon: 'cake-slice', label: 'Cake Slice', group: 'Good Food' },
+  { key: 'dessert', icon: 'dessert', label: 'Dessert', group: 'Good Food' },
+  { key: 'ice-cream', icon: 'ice-cream-cone', label: 'Ice Cream', group: 'Good Food' },
+  { key: 'candy', icon: 'candy', label: 'Candy', group: 'Good Food' },
+  { key: 'cookie', icon: 'cookie', label: 'Cookie', group: 'Good Food' },
+  { key: 'coffee', icon: 'coffee', label: 'Coffee', group: 'Good Food' },
+  { key: 'soda', icon: 'cup-soda', label: 'Milkshake', group: 'Good Food' },
+  { key: 'wine', icon: 'wine', label: 'Wine', group: 'Good Food' },
+  { key: 'cocktail', icon: 'martini', label: 'Cocktail', group: 'Good Food' },
+  { key: 'beer', icon: 'beer', label: 'Beer', group: 'Good Food' },
+  // Long drives
+  { key: 'car', icon: 'car', label: 'Car', group: 'Long Drives' },
+  { key: 'road-trip', icon: 'car-front', label: 'Road Trip', group: 'Long Drives' },
+  { key: 'full-tank', icon: 'fuel', label: 'Full Tank', group: 'Long Drives' },
+  { key: 'caravan', icon: 'caravan', label: 'Caravan', group: 'Long Drives' },
+  { key: 'route', icon: 'map-pinned', label: 'Scenic Route', group: 'Long Drives' },
+  { key: 'compass', icon: 'compass', label: 'Compass', group: 'Long Drives' },
+  { key: 'bike', icon: 'bike', label: 'Bike Ride', group: 'Long Drives' },
+  // Trips and getaways
+  { key: 'plane', icon: 'plane', label: 'Trip', group: 'Mini Vacations' },
+  { key: 'take-off', icon: 'plane-takeoff', label: 'Take Off', group: 'Mini Vacations' },
+  { key: 'luggage', icon: 'luggage', label: 'Luggage', group: 'Mini Vacations' },
+  { key: 'hotel', icon: 'hotel', label: 'Hotel Stay', group: 'Mini Vacations' },
+  { key: 'map', icon: 'map', label: 'Map', group: 'Mini Vacations' },
+  { key: 'beach', icon: 'tree-palm', label: 'Beach', group: 'Mini Vacations' },
+  { key: 'train', icon: 'train', label: 'Train Journey', group: 'Mini Vacations' },
+  { key: 'cruise', icon: 'ship', label: 'Cruise', group: 'Mini Vacations' },
+  { key: 'sailboat', icon: 'sailboat', label: 'Sailing', group: 'Mini Vacations' },
+  // Love and romance
+  { key: 'heart', icon: 'heart', label: 'Heart', group: 'Love & Romance' },
+  { key: 'passion', icon: 'flame', label: 'Passion', group: 'Love & Romance' },
+  { key: 'together', icon: 'heart-handshake', label: 'Together', group: 'Love & Romance' },
+  { key: 'date-night', icon: 'wine', label: 'Date Night', group: 'Love & Romance' },
+  { key: 'moon', icon: 'moon-star', label: 'Moon', group: 'Love & Romance' },
+  { key: 'flower', icon: 'flower-2', label: 'Flowers', group: 'Love & Romance' },
+  // Shopping
+  { key: 'shopping', icon: 'shopping-bag', label: 'Shopping', group: 'Treat Yourself' },
+  { key: 'cart', icon: 'shopping-cart', label: 'Shopping Spree', group: 'Treat Yourself' },
+  { key: 'shirt', icon: 'shirt', label: 'Clothes', group: 'Treat Yourself' },
+  { key: 'watch', icon: 'watch', label: 'Watch', group: 'Treat Yourself' },
+  { key: 'gem', icon: 'gem', label: 'Jewellery', group: 'Treat Yourself' },
+  { key: 'phone', icon: 'smartphone', label: 'Phone', group: 'Treat Yourself' },
+  { key: 'laptop', icon: 'laptop', label: 'Laptop', group: 'Treat Yourself' },
+  { key: 'headphones', icon: 'headphones', label: 'Headphones', group: 'Treat Yourself' },
+  // Friends and family
+  { key: 'friends', icon: 'users', label: 'Friends', group: 'Friends & Family' },
+  // Rest and pampering
+  { key: 'spa', icon: 'bath', label: 'Spa', group: 'Rest & Pampering' },
+  { key: 'lazy-day', icon: 'sofa', label: 'Lazy Day', group: 'Rest & Pampering' },
+  { key: 'sleep-in', icon: 'bed-double', label: 'Sleep In', group: 'Rest & Pampering' },
+  { key: 'sparkles', icon: 'sparkles', label: 'Sparkles', group: 'Rest & Pampering' },
+  // Experiences
+  { key: 'movie', icon: 'clapperboard', label: 'Movie', group: 'Experiences' },
+  { key: 'popcorn', icon: 'popcorn', label: 'Popcorn', group: 'Experiences' },
+  { key: 'concert', icon: 'mic-vocal', label: 'Concert', group: 'Experiences' },
+  { key: 'music', icon: 'music', label: 'Music', group: 'Experiences' },
+  { key: 'theatre', icon: 'drama', label: 'Theatre', group: 'Experiences' },
+  { key: 'fair', icon: 'ferris-wheel', label: 'Theme Park', group: 'Experiences' },
+  // Hobbies
+  { key: 'game', icon: 'gamepad-2', label: 'Gaming', group: 'Hobbies' },
+  { key: 'guitar', icon: 'guitar', label: 'Guitar', group: 'Hobbies' },
+  { key: 'book', icon: 'book-open', label: 'Book', group: 'Hobbies' },
+  { key: 'camera', icon: 'camera', label: 'Camera', group: 'Hobbies' },
+  { key: 'palette', icon: 'palette', label: 'Art', group: 'Hobbies' },
+  { key: 'paintbrush', icon: 'paintbrush', label: 'Painting', group: 'Hobbies' },
+  // Outdoors
+  { key: 'mountain', icon: 'mountain', label: 'Mountains', group: 'Outdoors' },
+  { key: 'forest', icon: 'tree-pine', label: 'Forest', group: 'Outdoors' },
+  { key: 'tent', icon: 'tent', label: 'Camping', group: 'Outdoors' },
+  { key: 'sea', icon: 'waves', label: 'Sea', group: 'Outdoors' },
+  { key: 'sunset', icon: 'sunset', label: 'Sunset', group: 'Outdoors' },
+  { key: 'binoculars', icon: 'binoculars', label: 'Exploring', group: 'Outdoors' },
+  { key: 'fishing', icon: 'fish', label: 'Fishing', group: 'Outdoors' },
+  { key: 'snow', icon: 'snowflake', label: 'Snow', group: 'Outdoors' },
+  { key: 'rainbow', icon: 'rainbow', label: 'Rainbow', group: 'Outdoors' },
+  // Marking the moment
+  { key: 'star', icon: 'star', label: 'Star', group: 'Marking the Moment' },
+  { key: 'ribbon', icon: 'ribbon', label: 'Ribbon', group: 'Marking the Moment' },
+  { key: 'photos', icon: 'images', label: 'Photos', group: 'Marking the Moment' },
+  { key: 'journal', icon: 'notebook-pen', label: 'Journal', group: 'Marking the Moment' },
+  { key: 'rocket', icon: 'rocket', label: 'Rocket', group: 'Marking the Moment' },
 ];
+// The order the icon groups are listed in.
+const REWARD_ICON_GROUPS = ['Classic Prizes', 'Good Food', 'Long Drives', 'Mini Vacations', 'Love & Romance', 'Treat Yourself',
+  'Friends & Family', 'Rest & Pampering', 'Experiences', 'Hobbies', 'Outdoors', 'Marking the Moment'];
+
 const REWARD_ANIMS = [
   { key: 'bob', cls: 'anim-bob', label: 'Bob' },
   { key: 'spin', cls: 'anim-spin', label: 'Spin' },
@@ -1906,6 +2004,29 @@ const REWARD_ANIMS = [
   { key: 'hop', cls: 'anim-hop', label: 'Hop' },
   { key: 'swing', cls: 'anim-swing', label: 'Swing' },
   { key: 'flip', cls: 'anim-flip', label: 'Flip' },
+  { key: 'float', cls: 'anim-float', label: 'Float' },
+  { key: 'levitate', cls: 'anim-levitate', label: 'Levitate' },
+  { key: 'breathe', cls: 'anim-breathe', label: 'Breathe' },
+  { key: 'heartbeat', cls: 'anim-heartbeat', label: 'Heartbeat' },
+  { key: 'bounce', cls: 'anim-bounce', label: 'Bounce' },
+  { key: 'jelly', cls: 'anim-jelly', label: 'Jelly' },
+  { key: 'tada', cls: 'anim-tada', label: 'Ta-da' },
+  { key: 'sway', cls: 'anim-sway', label: 'Sway' },
+  { key: 'tilt', cls: 'anim-tilt', label: '3D Tilt' },
+  { key: 'orbit', cls: 'anim-orbit', label: 'Orbit' },
+  { key: 'shimmer', cls: 'anim-shimmer', label: 'Shimmer' },
+  { key: 'ripple', cls: 'anim-ripple', label: 'Ripple' },
+  { key: 'glow', cls: 'anim-glow', label: 'Glow' },
+  { key: 'still', cls: 'anim-still', label: 'Still' },
+  { key: 'drive', cls: 'anim-drive', label: 'Cruising (Long Drive)' },
+  { key: 'take-off', cls: 'anim-takeoff', label: 'Take Off (Trip)' },
+  { key: 'waves', cls: 'anim-waves', label: 'On the Waves (Beach)' },
+  { key: 'savour', cls: 'anim-savour', label: 'Savour (Good Food)' },
+  { key: 'cheers', cls: 'anim-cheers', label: 'Cheers (Drinks)' },
+  { key: 'flutter', cls: 'anim-flutter', label: 'Flutter (Romance)' },
+  { key: 'dance', cls: 'anim-dance', label: 'Dance (Party)' },
+  { key: 'unwind', cls: 'anim-unwind', label: 'Unwind (Rest)' },
+  { key: 'firework', cls: 'anim-firework', label: 'Firework (Big Win)' },
 ];
 // Pastel colours that glow on the dark background. The keys are kept, so rewards saved earlier keep their colour.
 const REWARD_COLOURS = [
@@ -1916,7 +2037,48 @@ const REWARD_COLOURS = [
   { key: 'sky', label: 'Sky', from: '#7dd3fc', to: '#a5b4fc', spark: '#e0f2fe' },
   { key: 'coral', label: 'Peach', from: '#fdba74', to: '#fda4af', spark: '#ffedd5' },
   { key: 'teal', label: 'Aqua', from: '#67e8f9', to: '#93c5fd', spark: '#cffafe' },
+  { key: 'lilac', label: 'Lilac', from: '#d8b4fe', to: '#c4b5fd', spark: '#f3e8ff' },
+  { key: 'periwinkle', label: 'Periwinkle', from: '#a5b4fc', to: '#c7d2fe', spark: '#e0e7ff' },
+  { key: 'blush', label: 'Blush', from: '#fbcfe8', to: '#fecdd3', spark: '#fff1f2' },
+  { key: 'cotton-candy', label: 'Cotton Candy', from: '#f9a8d4', to: '#a5f3fc', spark: '#fdf4ff' },
+  { key: 'sunset', label: 'Sunset', from: '#fdba74', to: '#f9a8d4', spark: '#fff7ed' },
+  { key: 'apricot', label: 'Apricot', from: '#fed7aa', to: '#fdba74', spark: '#fff7ed' },
+  { key: 'lemon', label: 'Lemon', from: '#fef08a', to: '#bef264', spark: '#fefce8' },
+  { key: 'champagne', label: 'Champagne', from: '#fef3c7', to: '#fcd34d', spark: '#fffbeb' },
+  { key: 'rose-gold', label: 'Rose Gold', from: '#fecaca', to: '#fcd34d', spark: '#fff1f2' },
+  { key: 'pistachio', label: 'Pistachio', from: '#d9f99d', to: '#86efac', spark: '#f7fee7' },
+  { key: 'matcha', label: 'Matcha', from: '#bbf7d0', to: '#a3e635', spark: '#f0fdf4' },
+  { key: 'seafoam', label: 'Seafoam', from: '#99f6e4', to: '#a7f3d0', spark: '#f0fdfa' },
+  { key: 'ice', label: 'Ice', from: '#e0f2fe', to: '#a5f3fc', spark: '#ffffff' },
+  { key: 'aurora', label: 'Aurora', from: '#6ee7b7', to: '#c4b5fd', spark: '#ecfeff' },
+  { key: 'opal', label: 'Opal', from: '#a5f3fc', to: '#f5d0fe', spark: '#ffffff' },
+  { key: 'pearl', label: 'Pearl', from: '#f1f5f9', to: '#ddd6fe', spark: '#ffffff' },
+  { key: 'sunset-drive', label: 'Sunset Drive', from: '#fdba74', to: '#c4b5fd', spark: '#ffedd5' },
+  { key: 'night-drive', label: 'Night Drive', from: '#a5b4fc', to: '#f0abfc', spark: '#e0e7ff' },
+  { key: 'ocean', label: 'Ocean', from: '#7dd3fc', to: '#5eead4', spark: '#ecfeff' },
+  { key: 'sandy-beach', label: 'Sandy Beach', from: '#fde68a', to: '#fed7aa', spark: '#fffbeb' },
+  { key: 'candlelight', label: 'Candlelight', from: '#fde68a', to: '#fda4af', spark: '#fff7ed' },
+  { key: 'rose-wine', label: 'Rosé', from: '#fda4af', to: '#f0abfc', spark: '#fff1f2' },
+  { key: 'strawberry', label: 'Strawberry Cream', from: '#fecdd3', to: '#fef3c7', spark: '#fff1f2' },
+  { key: 'berry', label: 'Berry', from: '#f9a8d4', to: '#c4b5fd', spark: '#fdf4ff' },
+  { key: 'spa', label: 'Spa', from: '#a7f3d0', to: '#ddd6fe', spark: '#f0fdfa' },
+  { key: 'forest', label: 'Forest Mist', from: '#86efac', to: '#5eead4', spark: '#f0fdf4' },
 ];
+// Sparkles: what twinkles around the gift.
+const REWARD_SPARKLES = [
+  { key: 'stars', label: 'Stars' },
+  { key: 'hearts', label: 'Hearts (Romance)' },
+  { key: 'confetti', label: 'Confetti (Party)' },
+  { key: 'fireworks', label: 'Fireworks (Big Win)' },
+  { key: 'bubbles', label: 'Bubbles (Spa, Drinks)' },
+  { key: 'fireflies', label: 'Fireflies (Night Drive)' },
+  { key: 'petals', label: 'Petals (Love, Rest)' },
+  { key: 'steam', label: 'Steam (Good Food)' },
+  { key: 'snow', label: 'Snow (Mountains)' },
+  { key: 'sunbeams', label: 'Sunbeams (Beach, Outdoors)' },
+];
+// Rewards saved before they had their own look get one from these first options, so they never change.
+const LEGACY_LOOKS = { icons: 8, anims: 7, colours: 7 };
 const pickOption = (list, key) => list.find((x) => x.key === key) || null;
 
 // The look for a set of choices, resolved to what the page needs.
@@ -1924,18 +2086,19 @@ function lookFor(st) {
   const ic = pickOption(REWARD_ICONS, st.icon);
   const an = pickOption(REWARD_ANIMS, st.anim);
   const co = pickOption(REWARD_COLOURS, st.color);
+  const sp = pickOption(REWARD_SPARKLES, st.sparkle) || REWARD_SPARKLES[0];
   return {
-    icon: ic.icon, anim: an.cls, from: co.from, to: co.to, spark: co.spark,
-    style: { icon: ic.key, anim: an.key, color: co.key },
+    icon: ic.icon, anim: an.cls, from: co.from, to: co.to, spark: co.spark, fx: sp.key,
+    style: { icon: ic.key, anim: an.key, color: co.key, sparkle: sp.key },
   };
 }
 
 // A starting look by position, so the first few rewards differ in colour, icon and motion.
 function styleForIndex(i) {
   return {
-    icon: REWARD_ICONS[i % REWARD_ICONS.length].key,
-    anim: REWARD_ANIMS[i % REWARD_ANIMS.length].key,
-    color: REWARD_COLOURS[i % REWARD_COLOURS.length].key,
+    icon: REWARD_ICONS[i % LEGACY_LOOKS.icons].key,
+    anim: REWARD_ANIMS[i % LEGACY_LOOKS.anims].key,
+    color: REWARD_COLOURS[i % LEGACY_LOOKS.colours].key,
   };
 }
 
@@ -1955,20 +2118,27 @@ function rewardLook(r) {
 // The look a new reward starts with: the first colour that no other reward uses yet.
 function defaultRewardStyle(rewards) {
   const used = new Set(rewards.map((r) => rewardLook(r).style.color));
-  const i = REWARD_COLOURS.findIndex((c) => !used.has(c.key));
-  return styleForIndex(i >= 0 ? i : rewards.length);
+  const free = REWARD_COLOURS.find((c) => !used.has(c.key));
+  const st = styleForIndex(rewards.length);
+  return free ? { ...st, color: free.key } : st;
 }
 
-// Sparkles around each gift: [left %, top %, delay in seconds].
-const REWARD_SPARKS = [[6, 12, 0], [86, 8, 0.7], [92, 58, 1.3], [8, 72, 1.9], [48, -2, 0.4], [50, 98, 1.1]];
+// Sparkles around each gift: [left %, top %, delay in seconds, size in px, twinkle length in seconds].
+const REWARD_SPARKS = [
+  [6, 14, 0, 14, 2.6], [88, 6, 0.8, 11, 2.2], [96, 56, 1.5, 9, 2.9], [4, 70, 2.1, 10, 2.4],
+  [50, -4, 0.4, 12, 3.1], [56, 102, 1.2, 8, 2.3], [24, -2, 1.8, 6, 1.9], [76, 96, 2.5, 7, 2.7],
+];
+// Tiny glints that drift up and fade: [left %, top %, delay in seconds].
+const REWARD_GLINTS = [[18, 60, 0], [80, 70, 1.1], [36, 84, 2.0], [64, 30, 0.6], [90, 34, 1.6]];
 
 const lookVars = (look) => `--from:${look.from};--to:${look.to};--spark:${look.spark}`;
 
 // The moving icon, with its sparkles. Used on each reward and in the live preview.
 function rewardStageHTML(look) {
-  const sparks = REWARD_SPARKS.map(([x, y, d]) => `<i class="reward-spark" style="left:${x}%;top:${y}%;animation-delay:${d}s"></i>`).join('');
+  const sparks = REWARD_SPARKS.map(([x, y, d, s, t], k) => `<i class="reward-spark" style="left:${x}%;top:${y}%;--s:${s}px;--k:${k};animation-delay:${d}s;animation-duration:${t}s"></i>`).join('')
+    + REWARD_GLINTS.map(([x, y, d]) => `<i class="reward-glint" style="left:${x}%;top:${y}%;animation-delay:${d}s"></i>`).join('');
   return `
-    <div class="reward-stage">
+    <div class="reward-stage fx-${look.fx || 'stars'}">
       <span class="reward-glow" aria-hidden="true"></span>
       ${sparks}
       <div class="reward-orb ${look.anim}">${icon(look.icon)}</div>
@@ -1984,7 +2154,10 @@ function rewardCardHTML(r, i = 0) {
     if (!j.goal) return 'No longer on record';
     return j.goal.status === 'active' ? `${j.pct}% · In progress` : 'Not accomplished';
   };
-  const rows = p.journeys.map((j) => `
+  // The attached journeys in the standard order; ones no longer on record go last.
+  const rank = new Map(typeOrdered(p.journeys.map((j) => j.goal).filter(Boolean)).map((g, k) => [g.id, k]));
+  const ordered = [...p.journeys].sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9));
+  const rows = ordered.map((j) => `
     <li class="${j.done ? 'done' : ''}">${icon(j.done ? 'circle-check' : 'circle')}<span>${esc(j.goal?.title || 'Removed journey')}</span><small>${statusOf(j)}</small></li>`).join('');
   const countText = p.total
     ? `${p.done} of ${p.total} ${p.total === 1 ? 'journey' : 'journeys'} accomplished`
@@ -2005,6 +2178,10 @@ function rewardCardHTML(r, i = 0) {
       ${rewardStackHTML(r.items || [])}
       ${r.note ? `<p class="reward-note">${esc(r.note)}</p>` : ''}
       <div class="reward-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p.pct}" aria-label="Progress toward ${esc(r.title)}">
+        ${p.total ? `<div class="reward-pcts">
+          <span class="reward-pct"><b>${fmtPct(p.exactPct)}</b> so far</span>
+          <span class="reward-today${p.todayPct > 0 ? ' up' : ''}"><b>+${fmtPct(p.todayPct)}</b> today</span>
+        </div>` : ''}
         <div class="reward-bar"><span style="width:${p.pct}%"></span></div>
         <small class="reward-count">${p.ready ? 'Ready to open!' : countText}</small>
         ${dueText ? `<small class="reward-due${late ? ' late' : ''}">${dueText}</small>` : ''}
@@ -2024,23 +2201,166 @@ function rewardCardHTML(r, i = 0) {
     </article>`;
 }
 
+// ---------- auto-picking a reward's look from its name, note and gifts ----------
+// Each theme is a matching animation, colour and sparkles.
+const LOOK_THEMES = {
+  drive: { anim: 'drive', color: 'sunset-drive', sparkle: 'fireflies' },
+  trip: { anim: 'take-off', color: 'sky', sparkle: 'stars' },
+  beach: { anim: 'waves', color: 'ocean', sparkle: 'sunbeams' },
+  food: { anim: 'savour', color: 'candlelight', sparkle: 'steam' },
+  sweet: { anim: 'jelly', color: 'strawberry', sparkle: 'stars' },
+  drinks: { anim: 'cheers', color: 'rose-wine', sparkle: 'bubbles' },
+  romance: { anim: 'flutter', color: 'berry', sparkle: 'hearts' },
+  passion: { anim: 'heartbeat', color: 'candlelight', sparkle: 'petals' },
+  shopping: { anim: 'tada', color: 'rose-gold', sparkle: 'stars' },
+  tech: { anim: 'tilt', color: 'periwinkle', sparkle: 'stars' },
+  party: { anim: 'dance', color: 'cotton-candy', sparkle: 'confetti' },
+  rest: { anim: 'unwind', color: 'spa', sparkle: 'bubbles' },
+  show: { anim: 'tada', color: 'night-drive', sparkle: 'stars' },
+  hobby: { anim: 'jelly', color: 'pistachio', sparkle: 'stars' },
+  outdoors: { anim: 'float', color: 'forest', sparkle: 'sunbeams' },
+  snow: { anim: 'float', color: 'ice', sparkle: 'snow' },
+  win: { anim: 'firework', color: 'champagne', sparkle: 'fireworks' },
+};
+// Words to look for, the icon they mean, and its theme. More specific words come first.
+const LOOK_RULES = [
+  [/long drive|road ?trip|drive|driving|ride out/, 'road-trip', 'drive'],
+  [/\bcar\b|\bsuv\b/, 'car', 'drive'],
+  [/caravan|camper|\brv\b/, 'caravan', 'drive'],
+  [/bike|cycling|cycle|motorcycle/, 'bike', 'drive'],
+  [/scenic|route|highway/, 'route', 'drive'],
+  [/flight|\bfly\b|airport|plane/, 'take-off', 'trip'],
+  [/hotel|resort|staycation|\bstay\b/, 'hotel', 'trip'],
+  [/beach|island|coast|goa|maldives|bali/, 'beach', 'beach'],
+  [/cruise|\bship\b/, 'cruise', 'beach'],
+  [/sail|boat/, 'sailboat', 'beach'],
+  [/\bsea\b|ocean|swim|scuba|snorkel/, 'sea', 'beach'],
+  [/train/, 'train', 'trip'],
+  [/vacation|holiday|getaway|\btrip\b|travel|tour|abroad|weekend away/, 'plane', 'trip'],
+  [/fine dining|buffet|michelin/, 'fine-dining', 'food'],
+  [/pizza/, 'pizza', 'food'],
+  [/burger|sandwich|fries|shawarma/, 'burger', 'food'],
+  [/biryani|soup|noodles|ramen|curry|thali|comfort food/, 'soup', 'food'],
+  [/brunch|breakfast|croissant|bakery|pancake/, 'croissant', 'food'],
+  [/ice ?cream|gelato|sundae/, 'ice-cream', 'sweet'],
+  [/cake|birthday/, 'cake', 'sweet'],
+  [/dessert|pastry|sweets?|chocolate|brownie|waffle/, 'dessert', 'sweet'],
+  [/candy/, 'candy', 'sweet'],
+  [/cookie/, 'cookie', 'sweet'],
+  [/coffee|cafe|latte|cappuccino/, 'coffee', 'food'],
+  [/shake|smoothie|juice|soda/, 'soda', 'sweet'],
+  [/wine|champagne/, 'wine', 'drinks'],
+  [/cocktail|drinks?|\bbar\b|\bpub\b|mocktail/, 'cocktail', 'drinks'],
+  [/beer/, 'beer', 'drinks'],
+  [/dinner|restaurant|\bdine\b|\bmeal\b|feast|lunch|food|eat out|treat myself to/, 'dinner', 'food'],
+  [/\bsex\b|sexy|intima|sensual|passion|desire|hot night/, 'passion', 'passion'],
+  [/date night|\bdate\b/, 'date-night', 'romance'],
+  [/anniversary|together|couple/, 'together', 'romance'],
+  [/flowers?|roses?|bouquet/, 'flower', 'romance'],
+  [/romance|romantic|\blove\b|partner|wife|husband|girlfriend|boyfriend|kiss|cuddle/, 'heart', 'romance'],
+  [/jewel|\bring\b|necklace|bracelet|earring|diamond|\bgold\b/, 'gem', 'shopping'],
+  [/watch/, 'watch', 'shopping'],
+  [/clothes|shirt|dress|outfit|jacket|shoes|sneakers|saree|kurta/, 'shirt', 'shopping'],
+  [/iphone|phone/, 'phone', 'tech'],
+  [/laptop|macbook|computer|\bpc\b|ipad|tablet/, 'laptop', 'tech'],
+  [/headphones|earbuds|airpods|speaker/, 'headphones', 'tech'],
+  [/shopping spree|\bspree\b/, 'cart', 'shopping'],
+  [/shop|mall|\bbuy\b|amazon/, 'shopping', 'shopping'],
+  [/party|celebrat|\bclub\b/, 'party', 'party'],
+  [/friends|family|\bgang\b|reunion|hangout|get together/, 'friends', 'party'],
+  [/spa\b|massage|sauna|bath/, 'spa', 'rest'],
+  [/sleep|\bnap\b|lie in/, 'sleep-in', 'rest'],
+  [/lazy|relax|chill|\brest\b|day off|unwind/, 'lazy-day', 'rest'],
+  [/concert|\bgig\b|live show|festival/, 'concert', 'show'],
+  [/theme park|amusement|disney|wonderla|\bfair\b/, 'fair', 'show'],
+  [/theatre|theater|\bplay\b|stand ?up|comedy/, 'theatre', 'show'],
+  [/movie|cinema|film|netflix|series|binge/, 'movie', 'show'],
+  [/popcorn/, 'popcorn', 'show'],
+  [/music|song|album|vinyl/, 'music', 'show'],
+  [/game|gaming|playstation|ps5|xbox|console|nintendo/, 'game', 'hobby'],
+  [/guitar|piano|instrument/, 'guitar', 'hobby'],
+  [/\bbooks?\b|novel|kindle|reading/, 'book', 'hobby'],
+  [/camera|photography|lens/, 'camera', 'hobby'],
+  [/paint|\bart\b|sketch|canvas/, 'palette', 'hobby'],
+  [/snow|\bski|manali|shimla|kashmir|gulmarg/, 'snow', 'snow'],
+  [/trek|hike|hiking|mountain|hills?|himalaya/, 'mountain', 'outdoors'],
+  [/camp/, 'tent', 'outdoors'],
+  [/forest|jungle|nature|woods/, 'forest', 'outdoors'],
+  [/safari|wildlife|explore/, 'binoculars', 'outdoors'],
+  [/fishing|\bfish\b/, 'fishing', 'outdoors'],
+  [/sunset|sunrise/, 'sunset', 'outdoors'],
+  [/trophy|\bwin\b|award|achievement|milestone|promotion|graduat/, 'trophy', 'win'],
+  [/journal|diary/, 'journal', 'win'],
+  [/photos|album/, 'photos', 'win'],
+];
+
+/** The best look for the words typed: the name counts most, then the gifts, then the note. Null if nothing matches. */
+function autoLook({ title = '', note = '', items = [] }) {
+  const parts = [[title, 3], [items.join(' · '), 2], [note, 1]].map(([t, w]) => [String(t).toLowerCase(), w]);
+  let best = null;
+  LOOK_RULES.forEach(([re, iconKey, theme], order) => {
+    let score = 0;
+    for (const [t, w] of parts) if (re.test(t)) score += w;
+    if (score && (!best || score > best.score)) best = { score, order, iconKey, theme };
+  });
+  if (!best) return null;
+  return { icon: best.iconKey, ...LOOK_THEMES[best.theme] };
+}
+
+// Applies the auto-picked look to the drop-downs the user has not set by hand.
+function applyAutoLook(form) {
+  if (!form) return;
+  const fd = new FormData(form);
+  const look = autoLook({
+    title: fd.get('title') || '',
+    note: fd.get('note') || '',
+    items: fd.getAll('item').concat(String(fd.get('draft') || '').trim() ? [fd.get('draft')] : []),
+  });
+  if (!look) return;
+  let changed = false;
+  for (const name of ['icon', 'anim', 'color', 'sparkle']) {
+    const sel = form.querySelector(`select[name="${name}"]`);
+    if (!sel || sel.dataset.manual || !look[name] || sel.value === look[name]) continue;
+    if (![...sel.options].some((o) => o.value === look[name])) continue;
+    sel.value = look[name];
+    changed = true;
+  }
+  if (changed) refreshLookPreview(form, true);
+}
+
+// Redraws the preview from the four drop-downs.
+function refreshLookPreview(form, auto = false) {
+  const fd = new FormData(form);
+  const st = { icon: fd.get('icon'), anim: fd.get('anim'), color: fd.get('color'), sparkle: fd.get('sparkle') };
+  if (!pickOption(REWARD_ICONS, st.icon) || !pickOption(REWARD_ANIMS, st.anim) || !pickOption(REWARD_COLOURS, st.color)) return;
+  const preview = form.querySelector('[data-look-preview]');
+  if (!preview) return;
+  preview.outerHTML = lookPreviewHTML(lookFor(st), auto);
+  refreshIcons();
+}
+
 // The three look choices in the form, each its own drop-down: icon, animation and colour.
-function lookChoicesHTML(st) {
+function lookChoicesHTML(st, keep = false) {
+  const manual = keep ? ' data-manual="1"' : '';
+  const opt = (o, current) => `<option value="${o.key}"${o.key === current ? ' selected' : ''}>${o.label}</option>`;
   const select = (name, label, list, current) => `
     <label class="field look-field"><span>${label}</span>
-      <select name="${name}">${list.map((o) => `<option value="${o.key}"${o.key === current ? ' selected' : ''}>${o.label}</option>`).join('')}</select>
+      <select name="${name}"${manual}>${list.map((o) => opt(o, current)).join('')}</select>
     </label>`;
+  // Icons are grouped by the ways people celebrate.
+  const icons = REWARD_ICON_GROUPS.map((gname) => `<optgroup label="${gname}">${REWARD_ICONS.filter((o) => o.group === gname).map((o) => opt(o, st.icon)).join('')}</optgroup>`).join('');
   return `
-    <div class="look-section">
-      ${select('icon', 'Icon', REWARD_ICONS, st.icon)}
+    <div class="rw-look-opts">
+      <label class="field look-field"><span>Icon</span><select name="icon"${manual}>${icons}</select></label>
       ${select('anim', 'Animation', REWARD_ANIMS, st.anim)}
       ${select('color', 'Colour', REWARD_COLOURS, st.color)}
+      ${select('sparkle', 'Sparkles', REWARD_SPARKLES, st.sparkle || 'stars')}
     </div>`;
 }
 
 // The live preview at the top of the form. It follows the choices as they are changed.
-function lookPreviewHTML(look) {
-  return `<div class="look-preview" data-look-preview style="${lookVars(look)}">${rewardStageHTML(look)}<p class="look-preview-name">Preview</p></div>`;
+function lookPreviewHTML(look, auto = false) {
+  return `<div class="look-preview" data-look-preview style="${lookVars(look)}">${rewardStageHTML(look)}<p class="look-preview-name">${auto ? `${icon('wand-sparkles')}Picked for you` : 'Preview'}</p></div>`;
 }
 
 // A burst of confetti in the reward's own colours, over the Rewards panel.
@@ -2069,14 +2389,12 @@ function rewardStackHTML(items = []) {
 // The package field in the form: type a gift, press Add (or Enter), and each one appears as a row.
 function packageFieldHTML(items = []) {
   return `
-    <div class="field pkg-field">
-      <span>Gifts in this package</span>
+    <div class="pkg-field">
       <div class="pkg-add">
         <input type="text" name="draft" data-pkg-draft maxlength="${L.MAX_REWARD_ITEM_TITLE}" placeholder="For example, Dinner out">
         <button type="button" class="btn ghost sm" data-action="rw-item-add">${icon('plus')}Add</button>
       </div>
       <div class="pkg-list" data-pkg-list>${items.map(pkgRowHTML).join('')}</div>
-      <small class="field-hint">Optional. Shown in brackets on the card.</small>
     </div>`;
 }
 
@@ -2098,6 +2416,7 @@ function addPackageItem(form) {
   form.querySelector('[data-pkg-list]').insertAdjacentHTML('beforeend', pkgRowHTML(text));
   input.value = '';
   errBox.hidden = true;
+  applyAutoLook(form);
   input.focus();
 }
 
@@ -2117,29 +2436,50 @@ function rewardFormHTML() {
   const lastEnd = L.latestJourneyDeadline(r.goalIds || [], state.goals) || '';
   const st = editing ? rewardLook(editing).style : defaultRewardStyle(state.rewards);
   const choices = L.rewardChoices(state.goals);
-  const picks = choices.length
-    ? choices.map((g) => `
+  // Grouped by type (habits, SMART goals, sankalpas); in progress first, then accomplished, each in the saved order.
+  const pickRow = (g) => `
       <label class="check-row reward-pick">
         <input type="checkbox" name="goalIds" value="${esc(g.id)}"${r.goalIds.includes(g.id) ? ' checked' : ''}>
         <span>${icon(g.icon)}${esc(g.title)}</span>
-        <small class="muted">${esc(L.TYPE_LABEL[g.type] || '')} · ${g.status === 'completed' ? 'Accomplished' : 'In progress'}</small>
-      </label>`).join('')
+        <small class="rw-status${g.status === 'completed' ? ' done' : ''}">${g.status === 'completed' ? 'Accomplished' : 'In progress'}</small>
+      </label>`;
+  const picks = choices.length
+    ? L.TYPES.map((t) => {
+      const ofType = choices.filter((g) => g.type === t);
+      if (!ofType.length) return '';
+      const list = [...L.sortByOrder(ofType.filter((g) => g.status === 'active')), ...L.sortByOrder(ofType.filter((g) => g.status !== 'active'))];
+      return `<p class="reward-pick-type">${icon(TYPE_ICON[t])}<span>${TYPE_PLURAL[t]}</span></p>${list.map(pickRow).join('')}`;
+    }).join('')
     : '<p class="muted">Start a journey first, then come back here to attach it to a reward.</p>';
   return `
-    <form id="reward-form" class="form" novalidate>
-      ${lookPreviewHTML(lookFor(st))}
-      <label class="field"><span>Reward ${REQ}</span>
-        <input name="title" maxlength="${L.MAX_REWARD_TITLE}" placeholder="For example, a movie night" value="${esc(r.title)}" required></label>
-      <label class="field"><span>Note</span>
-        <input name="note" maxlength="${L.MAX_REWARD_NOTE}" placeholder="Optional" value="${esc(r.note || '')}"></label>
-      <label class="field"><span>Deadline</span>
-        <input type="date" name="deadline" min="${esc(lastEnd)}" value="${esc(r.deadline || lastEnd)}">
-        <small class="field-hint" data-deadline-hint>${deadlineHint(lastEnd)}</small></label>
-      ${packageFieldHTML(r.items || [])}
-      ${lookChoicesHTML(st)}
-      <div class="field"><span>Journeys that earn it</span><div class="reward-picks">${picks}</div></div>
+    <form id="reward-form" class="form rw-form" novalidate>
+      <section class="rw-card rw-look">
+        ${lookPreviewHTML(lookFor(st))}
+        ${lookChoicesHTML(st, !!editing)}
+      </section>
+      <section class="rw-card">
+        <h3 class="rw-sec">${icon('gift')}Reward</h3>
+        <label class="field"><span>Name ${REQ}</span>
+          <input name="title" maxlength="${L.MAX_REWARD_TITLE}" placeholder="For example, a movie night" value="${esc(r.title)}" required></label>
+        <label class="field"><span>Note</span>
+          <input name="note" maxlength="${L.MAX_REWARD_NOTE}" placeholder="Optional" value="${esc(r.note || '')}"></label>
+      </section>
+      <section class="rw-card">
+        <h3 class="rw-sec">${icon('package')}Gifts in this package</h3>
+        ${packageFieldHTML(r.items || [])}
+      </section>
+      <section class="rw-card">
+        <h3 class="rw-sec">${icon('route')}Journeys that earn it</h3>
+        <div class="reward-picks">${picks}</div>
+      </section>
+      <section class="rw-card">
+        <h3 class="rw-sec">${icon('calendar')}Deadline</h3>
+        <label class="field">
+          <input type="date" name="deadline" min="${esc(lastEnd)}" value="${esc(r.deadline || lastEnd)}" aria-label="Deadline">
+          <small class="field-hint" data-deadline-hint>${deadlineHint(lastEnd)}</small></label>
+      </section>
       <p class="error" data-error hidden></p>
-      <div class="reward-actions">
+      <div class="rw-actions">
         <button type="button" class="btn ghost" data-action="rw-back">Cancel</button>
         <button type="submit" class="btn primary">${icon('check')}Save reward</button>
       </div>
@@ -2163,11 +2503,17 @@ function onRewardsChange(e) {
     }
     return;
   }
-  const fd = new FormData(form);
-  const st = { icon: fd.get('icon'), anim: fd.get('anim'), color: fd.get('color') };
-  if (!pickOption(REWARD_ICONS, st.icon) || !pickOption(REWARD_ANIMS, st.anim) || !pickOption(REWARD_COLOURS, st.color)) return;
-  const preview = form.querySelector('[data-look-preview]');
-  if (preview) preview.outerHTML = lookPreviewHTML(lookFor(st));
+  if (e.target.matches('select[name="icon"], select[name="anim"], select[name="color"], select[name="sparkle"]')) {
+    e.target.dataset.manual = '1';   // chosen by hand: auto-pick leaves it alone from now on
+    refreshLookPreview(form);
+  }
+}
+
+// Typing the name or note picks a look to match (only for the choices not set by hand).
+function onRewardsInput(e) {
+  if (e.target.matches('#reward-form input[name="title"], #reward-form input[name="note"], #reward-form [data-pkg-draft]')) {
+    applyAutoLook(e.target.closest('form'));
+  }
 }
 
 const newRewardId = () => (crypto.randomUUID
@@ -2208,7 +2554,9 @@ async function onRewardsClick(e) {
     return;
   }
   if (action === 'rw-item-remove') {
+    const form = btn.closest('form');
     btn.closest('.pkg-row')?.remove();
+    applyAutoLook(form);
     return;
   }
   if (action === 'rw-more') {
@@ -2273,9 +2621,9 @@ function onRewardsSubmit(e) {
     errBox.hidden = false;
     return;
   }
-  const st = { icon: fd.get('icon'), anim: fd.get('anim'), color: fd.get('color') };
-  if (!pickOption(REWARD_ICONS, st.icon) || !pickOption(REWARD_ANIMS, st.anim) || !pickOption(REWARD_COLOURS, st.color)) {
-    errBox.textContent = 'Choose an icon, a movement and a colour.';
+  const st = { icon: fd.get('icon'), anim: fd.get('anim'), color: fd.get('color'), sparkle: fd.get('sparkle') || 'stars' };
+  if (!pickOption(REWARD_ICONS, st.icon) || !pickOption(REWARD_ANIMS, st.anim) || !pickOption(REWARD_COLOURS, st.color) || !pickOption(REWARD_SPARKLES, st.sparkle)) {
+    errBox.textContent = 'Choose an icon, an animation, a colour and sparkles.';
     errBox.hidden = false;
     return;
   }

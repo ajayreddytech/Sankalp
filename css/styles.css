@@ -1542,6 +1542,17 @@ input, textarea, select, option { text-transform: none; }
 
 /* the reward form */
 .reward-picks { display: grid; gap: 8px; text-align: left; }
+.reward-pick-type {
+  display: flex; align-items: center; gap: 8px; margin: 8px 2px 0; font-size: 12px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+.reward-pick-type:first-child { margin-top: 0; }
+.reward-pick-type svg, .reward-pick-type i { width: 15px; height: 15px; }
+/* the two percentages above a reward's bar: progress so far, and what today added */
+.reward-pcts { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.reward-pcts b { font-size: 17px; font-weight: 750; color: var(--text); font-variant-numeric: tabular-nums; }
+.reward-today b { font-size: 14px; color: var(--muted); }
+.reward-today.up b { color: #6ee7b7; }
 .reward-pick {
   display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: center; margin: 0; padding: 12px 14px;
   border-radius: 16px; background: #0b0b13; border: 1px solid var(--line-strong); cursor: pointer;
@@ -1550,8 +1561,6 @@ input, textarea, select, option { text-transform: none; }
 .reward-pick span { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 15px; color: var(--text); overflow-wrap: anywhere; }
 .reward-pick span svg, .reward-pick span i { width: 17px; height: 17px; flex-shrink: 0; color: #c4b5fd; }
 .reward-pick small { grid-column: 2; font-size: 12px; }
-.reward-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
-.reward-actions .btn { min-width: 120px; }
 
 /* the confetti burst over the panel */
 .reward-burst { position: fixed; left: 50%; top: 42%; width: 0; height: 0; z-index: 130; pointer-events: none; }
@@ -1568,7 +1577,6 @@ input, textarea, select, option { text-transform: none; }
 }
 .look-preview .reward-stage { transform: scale(0.85); }
 .look-preview-name { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
-.look-section { display: grid; gap: 8px; margin: 0 0 18px; }
 .look-title { font-size: 13px; color: var(--muted); font-weight: 600; }
 .look-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .look-opt { position: relative; cursor: pointer; }
@@ -1631,10 +1639,6 @@ input, textarea, select, option { text-transform: none; }
 .pkg-remove svg, .pkg-remove i { width: 16px; height: 16px; }
 
 /* the icon, animation and colour drop-downs in the reward form */
-.look-section { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
-.look-section .look-field { margin: 0; }
-.look-section select { width: 100%; min-width: 0; }
-@media (max-width: 520px) { .look-section { grid-template-columns: 1fr; } }
 
 /* pastel gifts that glow on the dark background */
 .reward-orb {
@@ -1647,3 +1651,378 @@ input, textarea, select, option { text-transform: none; }
 /* the gifts in a package: plain text, one above the other */
 .reward-stack { width: 100%; display: grid; gap: 4px; justify-items: center; }
 .stack-text { font-size: 15px; font-weight: 650; color: var(--text); overflow-wrap: anywhere; }
+
+/* ---------- reward form: sections in cards, left-aligned, with the buttons in a bar at the bottom ---------- */
+.rw-form { display: grid; gap: 12px; text-align: left; }
+.rw-card {
+  display: grid; gap: 12px; padding: 16px; border-radius: 20px;
+  background: rgba(255, 255, 255, 0.025); border: 1px solid var(--line);
+}
+.rw-sec {
+  display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; font-weight: 750;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+.rw-sec svg, .rw-sec i { width: 15px; height: 15px; color: #c4b5fd; }
+.rw-form .field { margin: 0; gap: 6px; text-align: left; }
+.rw-form .field > span { font-size: 12.5px; }
+.rw-form .field-hint { color: var(--muted); margin: 0; }
+
+/* the look: preview on the left, its three options on the right */
+.rw-look { grid-template-columns: 150px minmax(0, 1fr); align-items: stretch; gap: 14px; }
+.rw-look .look-preview { margin: 0; align-content: center; }
+.rw-look-opts { display: grid; gap: 8px; align-content: center; }
+.rw-look-opts .field { display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; gap: 10px; }
+.rw-look-opts select { padding: 9px 10px; font-size: 15px; }
+
+/* gifts: small tags */
+.rw-form .pkg-field { display: grid; gap: 10px; }
+.rw-form .pkg-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.rw-form .pkg-row { padding: 4px 4px 4px 12px; border-radius: 99px; gap: 4px; background: rgba(139, 92, 246, 0.12); border-color: rgba(139, 92, 246, 0.3); }
+.rw-form .pkg-row span { font-size: 14px; flex: 0 1 auto; }
+.rw-form .pkg-remove { width: 26px; height: 26px; border-radius: 99px; background: transparent; border: 0; }
+.rw-form .pkg-remove svg, .rw-form .pkg-remove i { width: 14px; height: 14px; }
+
+/* journeys: one slim line each, grouped by type */
+.rw-form .reward-picks { gap: 6px; }
+.rw-form .reward-pick-type { margin: 6px 2px 0; }
+.rw-form .reward-pick-type:first-child { margin-top: 0; }
+.rw-form .reward-pick { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; padding: 10px 12px; border-radius: 14px; }
+.rw-form .reward-pick small { grid-column: auto; }
+.rw-form .reward-pick span { font-size: 14.5px; }
+.rw-status { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.rw-status.done { color: #6ee7b7; }
+
+/* Cancel and Save: two equal buttons in a bar that stays at the bottom while the form scrolls */
+.rw-actions {
+  position: sticky; bottom: 0; z-index: 2; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  margin: 4px -22px -8px; padding: 12px 22px calc(14px + var(--safe-bottom));
+  background: linear-gradient(180deg, rgba(18, 18, 28, 0), #12121c 30%);
+}
+.rw-actions .btn { width: 100%; justify-content: center; }
+
+@media (max-width: 520px) {
+  .rw-card { padding: 14px; }
+  .rw-look { grid-template-columns: 104px minmax(0, 1fr); gap: 10px; }
+  .rw-look .look-preview { padding: 6px 4px; }
+  .rw-look .look-preview .reward-stage { transform: scale(0.7); margin: -10px; }
+  .rw-look-opts .field { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .rw-look-opts select { padding: 8px 8px; font-size: 14px; }
+  .rw-form .reward-pick { grid-template-columns: auto minmax(0, 1fr); }
+  .rw-form .reward-pick small { grid-column: 2; }
+}
+
+/* ---------- reward looks: glossy pastel gifts, realistic sparkles, and lifelike motion ---------- */
+/* A glossy highlight and a soft inner shade make each gift look like a real, lit object. */
+.reward-orb {
+  background:
+    radial-gradient(120% 90% at 28% 18%, rgba(255, 255, 255, 0.65), rgba(255, 255, 255, 0) 46%),
+    radial-gradient(90% 90% at 78% 88%, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0) 60%),
+    linear-gradient(140deg, var(--from), var(--to));
+  will-change: transform;
+}
+.reward-orb svg, .reward-orb i { filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.35)); }
+.reward-glow { filter: blur(6px); }
+
+/* sparkles: a bright core with four fine rays, each its own size and pace */
+.reward-spark {
+  width: var(--s, 12px); height: var(--s, 12px); margin: calc(var(--s, 12px) / -2) 0 0 calc(var(--s, 12px) / -2);
+  background: radial-gradient(circle, #fff 0 18%, var(--spark) 34%, transparent 70%);
+  clip-path: polygon(50% 0, 56% 44%, 100% 50%, 56% 56%, 50% 100%, 44% 56%, 0 50%, 44% 44%);
+  filter: drop-shadow(0 0 3px #fff) drop-shadow(0 0 8px var(--spark)) drop-shadow(0 0 14px var(--from));
+  animation-name: spark-glint; animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
+}
+@keyframes spark-glint {
+  0%, 100% { opacity: 0; transform: scale(0.2) rotate(0deg); }
+  12% { opacity: 1; transform: scale(1.15) rotate(20deg); }
+  24% { opacity: 0.85; transform: scale(0.9) rotate(35deg); }
+  40% { opacity: 0; transform: scale(0.3) rotate(60deg); }
+}
+.reward-glint {
+  position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #fff; opacity: 0;
+  box-shadow: 0 0 6px 1px var(--spark), 0 0 12px 2px color-mix(in srgb, var(--from) 70%, transparent);
+  animation: glint-rise 3.4s ease-out infinite;
+}
+@keyframes glint-rise {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(4px, -26px) scale(1); }
+}
+
+/* lifelike motion */
+.reward-orb.anim-float { animation: orb-float 4.2s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.reward-orb.anim-levitate { animation: orb-levitate 5s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.reward-orb.anim-breathe { animation: orb-breathe 4.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.reward-orb.anim-heartbeat { animation: orb-heartbeat 1.6s ease-in-out infinite; }
+.reward-orb.anim-bounce { transform-origin: 50% 100%; animation: orb-bounce 1.5s infinite; }
+.reward-orb.anim-jelly { animation: orb-jelly 2.4s ease-in-out infinite; }
+.reward-orb.anim-tada { animation: orb-tada 3s ease-in-out infinite; }
+.reward-orb.anim-sway { transform-origin: 50% 110%; animation: orb-sway 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.reward-orb.anim-tilt { animation: orb-tilt 6s ease-in-out infinite; }
+.reward-orb.anim-orbit { animation: orb-orbit 6s linear infinite; }
+.reward-orb.anim-glow { animation: orb-glow 2.6s ease-in-out infinite; }
+.reward-orb.anim-still { animation: none; }
+/* Shimmer: a soft band of light sweeps across the gift. */
+.reward-orb.anim-shimmer { overflow: hidden; animation: orb-float 4.2s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.reward-orb.anim-shimmer::after {
+  content: ""; position: absolute; inset: -20%; pointer-events: none;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.75) 50%, transparent 62%);
+  transform: translateX(-120%); animation: orb-shimmer 3.2s ease-in-out infinite;
+}
+/* Ripple: rings of light spread out from the gift, like on water. */
+.reward-orb.anim-ripple::before, .reward-orb.anim-ripple::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  border: 2px solid var(--spark); opacity: 0; animation: orb-ripple 2.8s ease-out infinite;
+}
+.reward-orb.anim-ripple::after { animation-delay: 1.4s; }
+
+@keyframes orb-float { 0%, 100% { transform: translateY(2px); } 50% { transform: translateY(-8px); } }
+@keyframes orb-levitate {
+  0%, 100% { transform: translateY(2px) rotate(-2deg); }
+  25% { transform: translateY(-6px) rotate(1deg); }
+  50% { transform: translateY(-10px) rotate(2deg); }
+  75% { transform: translateY(-4px) rotate(-1deg); }
+}
+@keyframes orb-breathe { 0%, 100% { transform: scale(0.96); } 50% { transform: scale(1.06); } }
+@keyframes orb-heartbeat {
+  0%, 40%, 100% { transform: scale(1); }
+  10% { transform: scale(1.14); } 20% { transform: scale(1.02); } 30% { transform: scale(1.1); }
+}
+@keyframes orb-bounce {
+  0%, 100% { transform: translateY(0) scale(1.08, 0.92); animation-timing-function: cubic-bezier(0.2, 0.7, 0.4, 1); }
+  12% { transform: translateY(-4px) scale(0.95, 1.06); animation-timing-function: cubic-bezier(0.2, 0.7, 0.4, 1); }
+  45% { transform: translateY(-20px) scale(1, 1); animation-timing-function: cubic-bezier(0.6, 0, 0.8, 0.4); }
+  88% { transform: translateY(0) scale(1.06, 0.94); }
+}
+@keyframes orb-jelly {
+  0%, 60%, 100% { transform: scale(1, 1); }
+  10% { transform: scale(1.16, 0.86); } 20% { transform: scale(0.88, 1.12); }
+  30% { transform: scale(1.08, 0.94); } 40% { transform: scale(0.97, 1.03); } 50% { transform: scale(1.01, 0.99); }
+}
+@keyframes orb-tada {
+  0%, 40%, 100% { transform: scale(1) rotate(0); }
+  4%, 8% { transform: scale(0.92) rotate(-4deg); }
+  12%, 20%, 28% { transform: scale(1.1) rotate(5deg); }
+  16%, 24% { transform: scale(1.1) rotate(-5deg); }
+  32% { transform: scale(1) rotate(0); }
+}
+@keyframes orb-sway { 0%, 100% { transform: rotate(-7deg) translateX(-2px); } 50% { transform: rotate(7deg) translateX(2px); } }
+@keyframes orb-tilt {
+  0%, 100% { transform: perspective(300px) rotateX(10deg) rotateY(-18deg); }
+  50% { transform: perspective(300px) rotateX(-8deg) rotateY(18deg); }
+}
+@keyframes orb-orbit {
+  from { transform: rotate(0deg) translateX(6px) rotate(0deg); }
+  to { transform: rotate(360deg) translateX(6px) rotate(-360deg); }
+}
+@keyframes orb-glow {
+  0%, 100% { filter: brightness(1) saturate(1); box-shadow: 0 0 24px -4px color-mix(in srgb, var(--from) 60%, transparent); }
+  50% { filter: brightness(1.12) saturate(1.15); box-shadow: 0 0 46px 6px color-mix(in srgb, var(--from) 85%, transparent); }
+}
+@keyframes orb-shimmer { 0% { transform: translateX(-120%); } 55%, 100% { transform: translateX(120%); } }
+@keyframes orb-ripple { 0% { opacity: 0.8; transform: scale(1); } 100% { opacity: 0; transform: scale(1.7); } }
+
+/* motions for each way of celebrating */
+.reward-orb.anim-drive { animation: orb-drive 2.8s ease-in-out infinite; }
+.reward-orb.anim-takeoff { animation: orb-takeoff 3.4s cubic-bezier(0.5, 0, 0.3, 1) infinite; }
+.reward-orb.anim-waves { transform-origin: 50% 80%; animation: orb-waves 3.8s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.reward-orb.anim-savour { animation: orb-savour 2.6s ease-in-out infinite; }
+.reward-orb.anim-cheers { transform-origin: 50% 90%; animation: orb-cheers 2.4s ease-in-out infinite; }
+.reward-orb.anim-flutter { animation: orb-flutter 3.2s ease-in-out infinite; }
+.reward-orb.anim-dance { transform-origin: 50% 100%; animation: orb-dance 1.2s ease-in-out infinite; }
+.reward-orb.anim-unwind { animation: orb-unwind 7s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.reward-orb.anim-firework { animation: orb-firework 2.6s cubic-bezier(0.2, 0.8, 0.3, 1) infinite; }
+
+/* A car on the road: small bumps and a gentle lean as it moves. */
+@keyframes orb-drive {
+  0%, 100% { transform: translateX(-5px) rotate(-1.5deg); }
+  20% { transform: translateX(-2px) translateY(-2px) rotate(0deg); }
+  25% { transform: translateX(-1px) translateY(0); }
+  50% { transform: translateX(5px) rotate(1.5deg); }
+  70% { transform: translateX(2px) translateY(-2px) rotate(0deg); }
+  75% { transform: translateX(1px) translateY(0); }
+}
+/* Lifts off, climbs away, and comes back in to land. */
+@keyframes orb-takeoff {
+  0%, 15% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  45% { transform: translate(18px, -22px) rotate(-14deg); opacity: 0; }
+  46% { transform: translate(-18px, 10px) rotate(-8deg); opacity: 0; }
+  75%, 100% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+}
+/* Rocking on gentle waves. */
+@keyframes orb-waves {
+  0%, 100% { transform: translateY(0) rotate(-5deg); }
+  25% { transform: translateY(-5px) rotate(0deg); }
+  50% { transform: translateY(0) rotate(5deg); }
+  75% { transform: translateY(-3px) rotate(0deg); }
+}
+/* A happy little lift, like the first bite. */
+@keyframes orb-savour {
+  0%, 100% { transform: translateY(0) scale(1); }
+  30% { transform: translateY(-6px) scale(1.04) rotate(-3deg); }
+  45% { transform: translateY(-6px) scale(1.04) rotate(3deg); }
+  60% { transform: translateY(0) scale(0.98); }
+}
+/* Raise the glass and clink. */
+@keyframes orb-cheers {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  35% { transform: rotate(-16deg) translateY(-6px); }
+  45% { transform: rotate(-10deg) translateY(-6px); }
+  50% { transform: rotate(-16deg) translateY(-6px); }
+  70% { transform: rotate(0deg) translateY(0); }
+}
+/* A light, floating heart flutter. */
+@keyframes orb-flutter {
+  0%, 100% { transform: translateY(0) scale(1); }
+  20% { transform: translateY(-5px) scale(1.06); }
+  25% { transform: translateY(-5px) scale(1); }
+  30% { transform: translateY(-6px) scale(1.06); }
+  60% { transform: translateY(-10px) scale(1) rotate(4deg); }
+}
+/* A dance step: bounce side to side. */
+@keyframes orb-dance {
+  0%, 100% { transform: translateX(0) rotate(0deg) scaleY(1); }
+  25% { transform: translateX(-4px) rotate(-8deg) scaleY(0.94); }
+  50% { transform: translateX(0) rotate(0deg) translateY(-6px) scaleY(1.04); }
+  75% { transform: translateX(4px) rotate(8deg) scaleY(0.94); }
+}
+/* Slow and calm, like a deep breath on a lazy day. */
+@keyframes orb-unwind {
+  0%, 100% { transform: translate(0, 0) rotate(-3deg) scale(0.98); }
+  50% { transform: translate(3px, -6px) rotate(3deg) scale(1.03); }
+}
+/* Gathers, bursts with light, and settles. */
+@keyframes orb-firework {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  15% { transform: scale(0.9); }
+  30% { transform: scale(1.18); filter: brightness(1.25); }
+  50% { transform: scale(1); filter: brightness(1.05); }
+}
+
+/* ---------- sparkle styles: what twinkles around the gift ---------- */
+.reward-stage:where(:not(.fx-stars)) .reward-spark { clip-path: none; filter: none; }   /* low priority: each style below sets its own */
+.reward-stage:not(.fx-stars):not(.fx-fireworks) .reward-glint { display: none; }
+
+/* hearts that float up and fade */
+.fx-hearts .reward-spark {
+  background: var(--from);
+  clip-path: polygon(50% 96%, 14% 62%, 2% 40%, 4% 20%, 16% 6%, 32% 4%, 50% 20%, 68% 4%, 84% 6%, 96% 20%, 98% 40%, 86% 62%);
+  filter: drop-shadow(0 0 6px var(--from)) drop-shadow(0 0 2px #fff);
+  animation-name: fx-rise;
+}
+.fx-hearts .reward-spark:nth-child(odd) { background: var(--to); }
+
+/* confetti that tumbles down in the gift's colours */
+.fx-confetti .reward-spark {
+  width: calc(var(--s) * 0.5); height: var(--s); border-radius: 2px; background: var(--from);
+  animation-name: fx-tumble;
+}
+.fx-confetti .reward-spark:nth-child(3n) { background: var(--to); }
+.fx-confetti .reward-spark:nth-child(3n + 1) { background: #fef08a; }
+.fx-confetti .reward-spark:nth-child(4n) { background: #a5f3fc; }
+
+/* fireworks: bright bursts of rays */
+.fx-fireworks .reward-spark {
+  background: repeating-conic-gradient(from 0deg, #fff 0 6deg, transparent 6deg 30deg);
+  border-radius: 50%;
+  -webkit-mask: radial-gradient(circle, transparent 22%, #000 24%); mask: radial-gradient(circle, transparent 22%, #000 24%);
+  width: calc(var(--s) * 2.2); height: calc(var(--s) * 2.2);
+  filter: drop-shadow(0 0 4px var(--spark)) drop-shadow(0 0 10px var(--from));
+  animation-name: fx-burst;
+}
+
+/* bubbles that rise and wobble */
+.fx-bubbles .reward-spark {
+  border-radius: 50%; background: radial-gradient(circle at 32% 30%, rgba(255, 255, 255, 0.95) 0 14%, rgba(255, 255, 255, 0.08) 30%, transparent 62%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--spark) 80%, transparent), 0 0 8px color-mix(in srgb, var(--from) 60%, transparent);
+  animation-name: fx-bubble;
+}
+
+/* fireflies: warm glowing dots that wander and blink */
+.fx-fireflies .reward-spark {
+  width: 5px; height: 5px; margin: -2px 0 0 -2px; border-radius: 50%; background: #fef9c3;
+  box-shadow: 0 0 6px 2px #fde68a, 0 0 16px 4px rgba(253, 230, 138, 0.55);
+  animation-name: fx-firefly;
+}
+
+/* petals that drift down and sway */
+.fx-petals .reward-spark {
+  border-radius: 0 100% 0 100%; background: linear-gradient(135deg, #fff, var(--from));
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--from) 70%, transparent));
+  animation-name: fx-petal;
+}
+
+/* steam: soft wisps rising from warm food */
+.fx-steam .reward-spark {
+  width: calc(var(--s) * 0.7); height: calc(var(--s) * 1.8); border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(255, 255, 255, 0.55), transparent 70%); filter: blur(1.5px);
+  animation-name: fx-steam;
+}
+.fx-steam .reward-spark:nth-child(n + 6) { display: none; }
+
+/* snow: small flakes drifting down */
+.fx-snow .reward-spark {
+  width: 5px; height: 5px; margin: -2px 0 0 -2px; border-radius: 50%; background: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.9); animation-name: fx-snow;
+}
+
+/* sunbeams: warm rays turning slowly behind the gift */
+.fx-sunbeams .reward-glow {
+  background: repeating-conic-gradient(from 0deg, color-mix(in srgb, #fde68a 55%, transparent) 0 8deg, transparent 8deg 24deg);
+  -webkit-mask: radial-gradient(circle, #000 25%, transparent 70%); mask: radial-gradient(circle, #000 25%, transparent 70%);
+  filter: blur(1px); inset: -16%; animation: fx-sun 18s linear infinite;
+}
+.fx-sunbeams .reward-spark { width: 4px; height: 4px; border-radius: 50%; background: #fef3c7; box-shadow: 0 0 8px 2px #fde68a; animation-name: fx-rise; }
+
+@keyframes fx-rise {
+  0% { opacity: 0; transform: translateY(8px) scale(0.5); }
+  25% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-22px) scale(0.8) rotate(12deg); }
+}
+@keyframes fx-tumble {
+  0% { opacity: 0; transform: translateY(-14px) rotate(0deg); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(6px, 26px) rotate(540deg) rotateX(180deg); }
+}
+@keyframes fx-burst {
+  0%, 30% { opacity: 0; transform: scale(0.1); }
+  42% { opacity: 1; transform: scale(0.9); }
+  70%, 100% { opacity: 0; transform: scale(1.3); }
+}
+@keyframes fx-bubble {
+  0% { opacity: 0; transform: translate(0, 10px) scale(0.4); }
+  20% { opacity: 1; }
+  50% { transform: translate(-4px, -8px) scale(0.9); }
+  100% { opacity: 0; transform: translate(3px, -26px) scale(1.1); }
+}
+@keyframes fx-firefly {
+  0%, 100% { opacity: 0.15; transform: translate(0, 0); }
+  25% { opacity: 1; transform: translate(6px, -5px); }
+  50% { opacity: 0.4; transform: translate(-3px, -10px); }
+  75% { opacity: 1; transform: translate(-7px, -2px); }
+}
+@keyframes fx-petal {
+  0% { opacity: 0; transform: translate(0, -12px) rotate(0deg); }
+  20% { opacity: 1; }
+  50% { transform: translate(-6px, 6px) rotate(120deg); }
+  100% { opacity: 0; transform: translate(6px, 24px) rotate(260deg); }
+}
+@keyframes fx-steam {
+  0% { opacity: 0; transform: translateY(6px) scaleX(0.6); }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(4px, -26px) scaleX(1.4); }
+}
+@keyframes fx-snow {
+  0% { opacity: 0; transform: translate(0, -12px); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-5px, 26px); }
+}
+@keyframes fx-sun { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .reward-orb, .reward-spark, .reward-glint, .reward-orb::after, .reward-orb::before, .reward-glow { animation: none !important; }
+}
+
+/* the "Picked for you" label in the form's preview */
+.look-preview-name { display: inline-flex; align-items: center; gap: 5px; }
+.look-preview-name svg, .look-preview-name i { width: 13px; height: 13px; color: var(--spark, #f5d0fe); }
+

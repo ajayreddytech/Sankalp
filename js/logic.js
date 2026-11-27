@@ -1206,6 +1206,22 @@ export function journeyFraction(goal, today = todayStr()) {
 }
 
 /**
+ * A journey as it stood before today's check-in: the entry for the day checked in today is taken out.
+ * A journey accomplished today counts as still in progress.
+ */
+function beforeToday(goal, today) {
+  if (!goal) return goal;
+  const finishedToday = goal.status === 'completed' && goal.completedAt && todayStr(new Date(goal.completedAt)) === today;
+  if (goal.status !== 'active' && !finishedToday) return goal;
+  const day = checkinDay(goal, today);
+  const checkins = { ...(goal.checkins || {}) };
+  const logs = { ...(goal.logs || {}) };
+  delete checkins[day];
+  delete logs[day];
+  return { ...goal, status: 'active', checkins, logs };
+}
+
+/**
  * Progress of one reward against the journeys on record. Its bar is the average progress of its journeys, each one
  * moving as the journey moves day by day. It is ready to open only when every journey is accomplished.
  * A journey that is no longer on record counts as 0.
@@ -1215,15 +1231,19 @@ export function rewardProgress(reward, goals = [], today = todayStr()) {
   const journeys = (reward.goalIds || []).map((id) => {
     const goal = byId.get(id) || null;
     const fraction = journeyFraction(goal, today);
-    return { id, goal, done: goal?.status === 'completed', fraction, pct: Math.round(fraction * 100) };
+    const before = journeyFraction(beforeToday(goal, today), today);
+    return { id, goal, done: goal?.status === 'completed', fraction, before, pct: Math.round(fraction * 100) };
   });
   const total = journeys.length;
   const done = journeys.filter((j) => j.done).length;
   const avg = total ? journeys.reduce((n, j) => n + j.fraction, 0) / total : 0;
+  const avgBefore = total ? journeys.reduce((n, j) => n + j.before, 0) / total : 0;
   return {
     total,
     done,
     pct: Math.round(avg * 100),
+    exactPct: avg * 100,                                  // progress so far, unrounded
+    todayPct: Math.max(0, (avg - avgBefore) * 100),       // what today's check-ins added
     ready: total > 0 && done === total && !reward.claimedAt,
     journeys,
   };

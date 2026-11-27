@@ -6,7 +6,7 @@ import {
   suggestIcon, redoData, redoDefaults, exceptionAvailability, cleanPlan, resolveSmartEnd, smartProgress, titleCase,
   smartBrief, checkinCounts, inCheckinGroup, nextDueDate, isOverdue, applyDelete, deletedGroups, accomplishedGroups, applySmartLog, smartPhase, sortByOrder, nextOrder, optionalText, nextActionText, checkinSummary, cleanSankalpaDays,
   cleanSmart, checkinDay, dayNumber, periodLabel, perPeriodAmount, isNextMorning, startInfo,
-  PERIOD_OPTIONS, PERIOD_SHORT, planUnit, dayTargetOf, countsOn, needsCheckin, MAX_PROJECTED_DAYS, restartPatch,
+  PERIOD_OPTIONS, PERIOD_SHORT, planUnit, dayTargetOf, countsOn, needsCheckin, MAX_PROJECTED_DAYS, restartPatch, rewardProgress,
 } from '../js/logic.js';
 
 const WHY = 'It makes me feel steady';
@@ -924,4 +924,18 @@ test('a missed SMART day can be logged the next day, then it closes', () => {
   const r = applySmartLog(g, [{ index: 0, date: '2026-01-01', value: 1 }], at('2026-01-02'));
   assert.equal(smartProgress({ ...g, ...r.patch }, '2026-01-02').days[0].state, 'done');
   assert.throws(() => applySmartLog(g, [{ index: 0, date: '2026-01-01', value: 1 }], at('2026-01-03')), /closed/);
+});
+
+test('a reward shows its progress so far and what today added', () => {
+  const g = { id: 'a', type: 'habit', status: 'active', title: 'A', attemptStart: '2026-11-20', targetDays: 66, checkins: {} };
+  for (let i = 0; i < 8; i++) g.checkins[addDays('2026-11-20', i)] = 'done';
+  const h = { id: 'b', type: 'sankalpa', status: 'active', title: 'B', attemptStart: '2026-11-27', targetDays: 10, checkins: {} };
+  const p = rewardProgress({ goalIds: ['a', 'b'] }, [g, h], '2026-11-27');
+  assert.ok(Math.abs(p.exactPct - (8 / 66 / 2) * 100) < 1e-9);
+  assert.ok(Math.abs(p.todayPct - (1 / 66 / 2) * 100) < 1e-9);   // only today's check-in
+  // Nothing checked in today: nothing added today.
+  assert.equal(rewardProgress({ goalIds: ['a'] }, [g], '2026-11-29').todayPct, 0);
+  // Accomplished today: the whole last step counts as today's.
+  const done = { ...g, status: 'completed', completedAt: new Date(2026, 10, 27, 9).toISOString() };
+  assert.ok(Math.abs(rewardProgress({ goalIds: ['a'] }, [done], '2026-11-27').todayPct - (100 - (7 / 66) * 100)) < 1e-9);
 });
