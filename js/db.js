@@ -175,38 +175,3 @@ export async function exportAll(uid) {
     goals: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
   };
 }
-
-// Deletes every journey in batches (Firestore allows 500 writes per batch).
-export async function deleteAllGoals(uid) {
-  const snap = await getDocs(goalsCol(uid));
-  const refs = snap.docs.map((d) => d.ref);
-  for (let i = 0; i < refs.length; i += 400) {
-    const batch = writeBatch(db);
-    refs.slice(i, i + 400).forEach((ref) => batch.delete(ref));
-    await batch.commit();
-  }
-  return refs.length;
-}
-
-// Resets the account to brand new: every journey and the profile record are deleted.
-// The Google sign-in itself stays, so the next visit starts from an empty account.
-export async function resetAccount(uid) {
-  const count = await deleteAllGoals(uid);
-  await deleteDoc(doc(db, 'users', uid));
-  return count;
-}
-
-// Read every journey with its document reference, and write many changes in batches of 400.
-// The localhost-only reset tool (js/local-tools.js, not in GitHub) uses these.
-export async function allGoalDocs(uid) {
-  const snap = await getDocs(goalsCol(uid));
-  return snap.docs.map((d) => ({ ref: d.ref, id: d.id, data: d.data() }));
-}
-
-export async function commitWrites(writes) {
-  for (let i = 0; i < writes.length; i += 400) {
-    const batch = writeBatch(db);
-    writes.slice(i, i + 400).forEach((w) => (w.delete ? batch.delete(w.ref) : batch.update(w.ref, w.patch)));
-    await batch.commit();
-  }
-}

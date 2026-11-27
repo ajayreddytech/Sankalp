@@ -184,9 +184,9 @@ export function suggestIcon(title, type = 'habit') {
 
 // ---------- rules per type ----------
 
-/** Only habits allow exception days. Sankalpas and SMART goals have none. */
-export function policyFor(goal) {
-  if (goal.type === 'habit') return { maxExceptions: MAX_EXCEPTIONS, gapDays: EXCEPTION_GAP_DAYS };
+/** No journey allows exception days: habits, sankalpas and SMART goals all restart on a miss.
+ * Exceptions taken before this rule stay in their records. */
+export function policyFor() {
   return { maxExceptions: 0, gapDays: 0 };
 }
 
@@ -864,7 +864,7 @@ export function applyCheckin(goal, date, answer, now = new Date()) {
 
 /** Why a miss cannot be covered by an exception. Used in the archive and in the UI. */
 export function missReason(avail) {
-  if (avail.reason === 'not_allowed') return 'Missed a day. Sankalpas have no exceptions';
+  if (avail.reason === 'not_allowed') return 'Missed a day. No exceptions';
   if (avail.reason === 'too_soon') return `Missed again within ${EXCEPTION_GAP_DAYS} days of the last exception`;
   return 'All exceptions were already used';
 }

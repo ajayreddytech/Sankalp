@@ -4,17 +4,11 @@ import * as L from './logic.js';
 import { ICON_GROUPS, COLOURS, DEFAULT_COLOUR } from './choices.js';
 import { renderMarkdown } from './markdown.js';
 
-// Localhost-only tools (never pushed to GitHub): loaded only when the app runs on this computer.
-let localTools = null;
-if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
-  import('./local-tools.js').then((m) => { localTools = m; }).catch(() => {});
-}
-
 // What each kind of journey means, shown under its column so the three are easy to tell apart.
 const TYPE_PLURAL = { habit: 'Habits', sankalpa: 'Sankalpas', smart: 'SMART Goals' };
 const TYPE_ICON = { habit: 'toggle-right', sankalpa: 'signature', smart: 'locate-fixed' };
 const TYPE_SUB = {
-  habit: '66 days in a row. Two exception days allowed.',
+  habit: '66 days in a row. No exceptions.',
   sankalpa: 'A vow for the number of days you choose. No exceptions.',
   smart: 'A plan of measurable actions, logged each day toward a deadline.',
 };
@@ -947,7 +941,7 @@ function viewHabitGoal(g, today) {
       : (nextExc.reason === 'too_soon'
         ? `You already used an exception recently. A miss now restarts the journey. The next exception opens on ${fmtDate(nextExc.nextAllowed)}.`
         : nextExc.reason === 'not_allowed'
-          ? 'Sankalpas have no exceptions. A miss restarts the journey.'
+          ? 'No exceptions. A miss restarts the journey.'
           : 'All exceptions are used. A miss restarts the journey.');
     panel = `
       <section class="panel checkin-panel compact">
@@ -1000,7 +994,7 @@ function viewHabitGoal(g, today) {
         <div class="block-head">
           <h2>Journey</h2>
           <div class="legend">
-            <span><i class="dot d"></i>Done</span><span><i class="dot e"></i>Exception</span>
+            <span><i class="dot d"></i>Done</span>${j.exceptions ? '<span><i class="dot e"></i>Exception</span>' : ''}
             <span><i class="dot a"></i>Open</span><span><i class="dot l"></i>Locked</span>
           </div>
         </div>
@@ -1820,9 +1814,7 @@ function openAccount() {
       </div>
       <div class="menu">
         <button class="menu-item" data-action="rewards">${icon('gift')}<div><strong>Rewards</strong><small class="muted">Choose a reward, attach the journeys that earn it, and claim it when they are done</small></div></button>
-        ${localTools?.resetMenuHTML() ?? ''}
         <button class="menu-item" data-action="export">${icon('download')}<div><strong>Export my data</strong><small class="muted">Download everything as a JSON backup</small></div></button>
-        <button class="menu-item danger-text" data-action="reset-account">${icon('rotate-ccw')}<div><strong>Reset account</strong><small class="muted">Deletes every journey and all your data. Your sign-in stays.</small></div></button>
         <button class="menu-item danger-text" data-action="signout">${icon('log-out')}<div><strong>Sign out</strong><small class="muted">Your data stays safe in the cloud</small></div></button>
       </div>`,
   });
@@ -2312,7 +2304,7 @@ async function checkin(goalId, date, answer) {
         ? `This day is recorded as an exception. You have ${av.remaining} left and the journey grows by one day.`
         : `${av.reason === 'too_soon'
           ? `You missed again within ${L.policyFor(g).gapDays} days of your last exception.`
-          : av.reason === 'not_allowed' ? 'Sankalpas have no exceptions.' : 'All exceptions are used.'}
+          : av.reason === 'not_allowed' ? 'There are no exceptions.' : 'All exceptions are used.'}
            The attempt is saved under Not accomplished and the journey restarts tomorrow.`,
       confirmLabel: av.ok ? 'Use exception' : 'Restart',
       danger: !av.ok,
@@ -2478,26 +2470,6 @@ function onModalRootClick(e) {
   if (act.dataset.action === 'rewards') {
     document.querySelector('.modal-backdrop')?.remove();
     openRewards();
-  }
-  if (act.dataset.action === 'local-reset') localTools?.runReset({ uid: state.user.uid, confirmDialog, toast });
-  if (act.dataset.action === 'reset-account') resetAccount();
-}
-
-async function resetAccount() {
-  const ok = await confirmDialog({
-    title: 'Reset your account?',
-    message: 'Every habit, sankalpa and SMART goal, all history, and your profile data will be permanently deleted. Your account becomes brand new. This cannot be undone.',
-    confirmLabel: 'Reset everything',
-    danger: true,
-  });
-  if (!ok) return;
-  try {
-    const count = await db.resetAccount(state.user.uid);
-    document.querySelectorAll('.modal-backdrop').forEach((m) => m.remove());
-    location.hash = '#/home';
-    toast(`Account reset. ${count} journey${count === 1 ? '' : 's'} deleted.`, 'info');
-  } catch (err) {
-    toast(err.message, 'error');
   }
 }
 

@@ -13,7 +13,7 @@ Most people don't fail because they lack willpower. They fail because a single m
 SANKALP treats commitment as a journey, not a streak:
 
 - **Three kinds of commitment, each with its own rules.**
-  - **Habit:** 66 days, the length research commonly links to a habit taking hold. Two exception days, spaced at least 15 days apart.
+  - **Habit:** 66 days, the length research commonly links to a habit taking hold. No exceptions.
   - **Sankalpa:** a vow for the number of days you choose, with no exceptions.
   - **SMART goal:** a plan of measurable actions, logged daily toward a deadline.
 - **Setbacks are recorded, not erased.** Every attempt stays in your history, so you can see how far you have come and start again from a clear point.
@@ -33,7 +33,7 @@ SANKALP treats commitment as a journey, not a streak:
 
 - **Your data is yours.** Everything lives in your own Google account, behind security rules that let only you read or write it.
 - **No hidden copies.** The app keeps nothing in the browser's local storage.
-- **Export anytime.** Download all your data as a JSON backup, or reset your account whenever you want.
+- **Export anytime.** Download all your data as a JSON backup whenever you want.
 - **Safe on two devices.** Each check-in is saved as one transaction, so the same day can't be counted twice.
 
 ## Why it can change a life

@@ -124,55 +124,43 @@ test('check-in on a closed day is rejected', () => {
   assert.throws(() => applyCheckin(g, '2026-01-05', 'yes', at('2026-01-05')));
 });
 
-test('first miss uses an exception and the journey grows by one day', () => {
+test('a habit has no exceptions: the first miss restarts it from the next day', () => {
   const { goal, outcomes } = run(newGoal('2026-01-01'), [['2026-01-01', 'no']]);
-  assert.deepEqual(outcomes, ['exception']);
-  assert.equal(totalCells(goal), 67);
-  assert.equal(goal.attempt, 1);
+  assert.deepEqual(outcomes, ['failed']);
+  assert.equal(goal.attempt, 2);
+  assert.equal(goal.attemptStart, '2026-01-02');
+  assert.equal(totalCells(goal), 66);
+  assert.match(goal.history[0].reason, /no exceptions/i);
+  assert.equal(exceptionAvailability(goal, '2026-01-02').reason, 'not_allowed');
 });
 
-test('a second miss within 15 days restarts the journey from the next day', () => {
+test('a habit miss keeps the record of the attempt', () => {
   let g = newGoal('2026-01-01');
-  ({ goal: g } = run(g, [['2026-01-01', 'yes'], ['2026-01-02', 'no']]));
-  const res = applyCheckin(g, '2026-01-03', 'no', at('2026-01-03'));
+  ({ goal: g } = run(g, [['2026-01-01', 'yes']]));
+  const res = applyCheckin(g, '2026-01-02', 'no', at('2026-01-02'));
   assert.equal(res.outcome, 'failed');
   const next = { ...g, ...res.patch };
   assert.equal(next.attempt, 2);
-  assert.equal(next.attemptStart, '2026-01-04');
+  assert.equal(next.attemptStart, '2026-01-03');
   assert.deepEqual(next.checkins, {});
   assert.equal(next.history.length, 1);
   assert.equal(next.history[0].outcome, 'failed');
   assert.equal(next.history[0].doneCount, 1);
-  assert.equal(next.history[0].exceptionsUsed, 1);
+  assert.equal(next.history[0].exceptionsUsed, 0);
   assert.equal(next.history[0].checkins['2026-01-01'], 'done'); // nothing lost
 });
 
-test('a second exception is allowed once 15 days have passed', () => {
-  let g = newGoal('2026-01-01');
-  const answers = [];
-  for (let d = 1; d <= 15; d++) answers.push([addDays('2026-01-01', d - 1), 'yes']);
-  ({ goal: g } = run(g, answers));
-  const first = applyCheckin(g, '2026-01-16', 'no', at('2026-01-16'));
-  assert.equal(first.outcome, 'exception');
-  g = { ...g, ...first.patch };
-  const more = [];
-  for (let d = 17; d <= 30; d++) more.push([addDays('2026-01-01', d - 1), 'yes']);
-  ({ goal: g } = run(g, more));
-  const second = applyCheckin(g, '2026-01-31', 'no', at('2026-01-31'));
-  assert.equal(second.outcome, 'exception');
-  assert.equal(diffDays('2026-01-16', '2026-01-31'), 15);
-});
-
-test('third miss is a failure even after a long gap', () => {
+test('exceptions taken before the rule change stay, but a new miss restarts', () => {
   const checkins = {};
   for (let i = 0; i < 59; i++) {
     const d = addDays('2026-01-01', i);
-    checkins[d] = d === '2026-01-01' || d === '2026-02-01' ? 'exception' : 'done';
+    checkins[d] = d === '2026-01-01' ? 'exception' : 'done';
   }
   const g = newGoal('2026-01-01', { checkins });
+  assert.equal(totalCells(g), 67);
   const res = applyCheckin(g, '2026-03-01', 'no', at('2026-03-01'));
   assert.equal(res.outcome, 'failed');
-  assert.match(res.reason, /already used/);
+  assert.equal(res.patch.history[0].exceptionsUsed, 1);
 });
 
 test('completing the target marks the goal accomplished', () => {
@@ -186,9 +174,9 @@ test('completing the target marks the goal accomplished', () => {
   assert.throws(() => applyCheckin(g, '2026-03-08', 'yes', at('2026-03-08')));
 });
 
-test('exception extends completion: 66 target + 1 exception needs 67 cells, still 66 dones', () => {
-  let g = newGoal('2026-01-01');
-  const answers = [['2026-01-01', 'no']];
+test('an old exception extends completion: 66 target + 1 exception needs 67 cells, still 66 dones', () => {
+  let g = newGoal('2026-01-01', { checkins: { '2026-01-01': 'exception' } });
+  const answers = [];
   for (let i = 1; i < 67; i++) answers.push([addDays('2026-01-01', i), 'yes']);
   ({ goal: g } = run(g, answers));
   assert.equal(g.status, 'completed');
@@ -227,7 +215,7 @@ test('a sankalpa has no exceptions: the first miss restarts it', () => {
   const g = { id: 's1', ...newGoalData({ type: 'sankalpa', title: 'Walk', why: WHY, description: DESC, days: 10, startDate: '2026-01-01', now: at('2026-01-01') }) };
   const res = applyCheckin(g, '2026-01-01', 'no', at('2026-01-01'));
   assert.equal(res.outcome, 'failed');
-  assert.match(res.reason, /no exceptions/);
+  assert.match(res.reason, /no exceptions/i);
   assert.equal(exceptionAvailability(g, '2026-01-01').reason, 'not_allowed');
 });
 
